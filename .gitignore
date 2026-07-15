@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Project artefacts
+results/
+wandb/
+*.png
+configs/calibrated.json
+
+# Data (large, downloaded separately)
+data/*
+!data/README.md
+
+# Tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+.ipynb_checkpoints/
