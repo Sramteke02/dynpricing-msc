@@ -1,11 +1,11 @@
 {
-  "ref_price": 10.0,
-  "unit_cost": 4.0,
-  "price_min": 5.0,
-  "price_max": 20.0,
-  "init_price": 10.0,
-  "base_demand": 120.0,
-  "elasticity": 1.8,
+  "ref_price": 2.1,
+  "unit_cost": 0.84,
+  "price_min": 0.42,
+  "price_max": 9.95,
+  "init_price": 2.1,
+  "base_demand": 36.0,
+  "elasticity": 0.771,
   "cross_elasticity": 0.6,
   "noise_cv": 0.1,
   "n_competitors": 2,
@@ -24,6 +24,8 @@
   "init_inventory": 12000,
   "allow_stockout_termination": true,
   "discount": 0.99,
-  "calibration_notes": "No datasets found under 'data'. Using documented synthetic defaults.",
-  "calibration_sources": []
+  "calibration_notes": "UCI: ref_price=2.10; demand-sensitivity param set to 0.77 from a DESCRIPTIVE log-log slope (not an identified elasticity).",
+  "calibration_sources": [
+    "UCI Online Retail II"
+  ]
 }
