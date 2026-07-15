@@ -9,10 +9,11 @@ dist/
 venv/
 
 # Project artefacts
-results/
+# NOTE: results/ and configs/calibrated.json are tracked on purpose so the
+# reported experiment output is preserved alongside the code.
 wandb/
 *.png
-configs/calibrated.json
+!results/*.png
 
 # Data (large, downloaded separately)
 data/*

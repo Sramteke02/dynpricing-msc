@@ -1,0 +1,29 @@
+{
+  "ref_price": 10.0,
+  "unit_cost": 4.0,
+  "price_min": 5.0,
+  "price_max": 20.0,
+  "init_price": 10.0,
+  "base_demand": 120.0,
+  "elasticity": 1.8,
+  "cross_elasticity": 0.6,
+  "noise_cv": 0.1,
+  "n_competitors": 2,
+  "competitor_init": [
+    10.0,
+    10.5
+  ],
+  "competitor_drift": 0.02,
+  "competitor_reversion": 0.1,
+  "horizon": 90,
+  "seasonal_amplitude": 0.25,
+  "weekend_uplift": 0.15,
+  "holiday_uplift": 0.4,
+  "holiday_days": [],
+  "start_day_of_year": 0,
+  "init_inventory": 12000,
+  "allow_stockout_termination": true,
+  "discount": 0.99,
+  "calibration_notes": "No datasets found under 'data'. Using documented synthetic defaults.",
+  "calibration_sources": []
+}
