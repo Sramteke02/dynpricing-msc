@@ -114,8 +114,6 @@ def _calibrate_from_uci(
 
     # robust reference price/volume/cost and price band from the data
     ref_price = round(float(df[price_col].median()), 3)
-    p_lo = float(df[price_col].quantile(0.05))
-    p_hi = float(df[price_col].quantile(0.95))
     # daily-equivalent reference volume per product line (aggregate, smoothed)
     q_ref = round(float(np.clip(df[qty_col].median() * 12.0, 20.0, 500.0)), 1)
     unit_cost = round(ref_price * 0.4, 3)
@@ -125,11 +123,34 @@ def _calibrate_from_uci(
     d = cross_ratio * b
     a0 = q_ref + b * ref_price - d * ref_price
 
+    # Reconcile the price band with the DEMAND parameters, not UCI's raw observed
+    # price range. The old band (5th/95th percentile, ~[0.42, 9.95]) ran ~3x the
+    # choke price a/b = p_ref*(1 + 1/eps_target) = 3.15, leaving ~71% of the band
+    # economically dead (q = 0). Instead:
+    #   price_min = unit_cost                (no below-cost pricing)
+    #   price_max = 1.2 * max_t choke(t)     over the horizon at the MAX scenario
+    #               amplitude, where choke(t) = a(t)/b is the zero-demand price;
+    #               1.2x leaves headroom for competitor drift without a large dead
+    #               zone.
+    competitor_init = (2.0, 2.2)
+    cbar = float(np.mean(competitor_init))
+    base = result.config
+    max_amp = min(0.6, base.seasonal_amplitude * 2.0)  # strong_seasonality amplitude
+
+    def _choke(t: int) -> float:
+        S = 1.0 + max_amp * np.sin((base.start_day_of_year + t) / 365.0 * 2.0 * np.pi)
+        C = 1.0 + (base.weekend_uplift if (t % 7) >= 5 else 0.0)
+        return (a0 * S * C + d * cbar) / b
+
+    max_choke = max(_choke(t) for t in range(base.horizon))
+    price_min = round(unit_cost, 3)
+    price_max = round(1.2 * max_choke, 3)
+
     overrides.update(
         ref_price=ref_price,
         init_price=ref_price,
-        price_min=round(max(0.1, min(p_lo, ref_price * 0.5)), 3),
-        price_max=round(max(p_hi, ref_price * 1.8), 3),
+        price_min=price_min,
+        price_max=price_max,
         unit_cost=unit_cost,
         base_demand=q_ref,
         a0=a0,
@@ -137,7 +158,7 @@ def _calibrate_from_uci(
         d=d,
         # competitor prices anchored near the (new) reference price, so cbar is
         # inside the band. The old (10.0, 10.5) was built for ref_price=10.
-        competitor_init=(2.0, 2.2),
+        competitor_init=competitor_init,
     )
     result.sources_used.append("UCI Online Retail II")
     result.notes.append(
@@ -146,7 +167,11 @@ def _calibrate_from_uci(
         f"eps_target={eps_target} (NOT regressed from the data); "
         f"d={cross_ratio}*b={d:.4f}, a0={a0:.4f}."
     )
-    result.notes.append("UCI: competitor_init set to (2.0, 2.2), near p_ref.")
+    result.notes.append(
+        f"UCI: price band reconciled to demand -> [{price_min}, {price_max}] "
+        f"(price_min=unit_cost; price_max=1.2 x max choke {max_choke:.3f} at "
+        f"amplitude {max_amp}); competitor_init=(2.0, 2.2) near p_ref."
+    )
 
 
 def _calibrate_from_ons(path: Path, result: CalibrationResult, overrides: dict) -> None:
