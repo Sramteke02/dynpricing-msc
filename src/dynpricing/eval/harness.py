@@ -42,7 +42,7 @@ def default_scenarios(base: EnvConfig) -> list[Scenario]:
     return [
         Scenario("baseline", base),
         Scenario("high_competition", variant(
-            cross_elasticity=base.cross_elasticity * 1.6,
+            d=base.d * 1.6,
             competitor_drift=base.competitor_drift * 1.5,
         )),
         Scenario("scarce_inventory", variant(

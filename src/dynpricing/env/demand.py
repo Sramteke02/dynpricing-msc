@@ -1,9 +1,23 @@
 """The demand model: the economic heart of the simulation.
 
-A price-sensitive function grounded in constant-elasticity demand, modulated by
-competitor prices and seasonal/calendar effects and perturbed by multiplicative
-noise. The model is fully transparent and owned by the environment; it is
-**never** shared with the learning agents. Only the oracle may use it directly.
+A **linear (differentiated-Bertrand) demand** function: expected units fall
+linearly in own price, rise linearly in the mean competitor price, and are
+modulated by multiplicative seasonal/calendar factors, then clamped at zero.
+Realised units add multiplicative log-normal noise. The model is fully
+transparent and owned by the environment; it is **never** shared with the
+learning agents. Only the oracle may use it directly.
+
+    q(p, t) = max(0, a0 * S(t) * C(t) - b * p + d * cbar(t))
+
+with a(t) = a0 * S(t) * C(t) + d * cbar(t) the (time-varying) demand
+intercept, so q(p, t) = max(0, a(t) - b * p).
+
+Why linear rather than isoelastic. Under constant-elasticity demand
+q = K(t) * p^(-eta) the profit-maximising price p* = c * eta / (eta - 1) is a
+CONSTANT, independent of season, calendar, competitors and inventory. Linear
+demand instead gives p*(t) = (a(t)/b + c)/2, which moves with the intercept
+a(t) — so seasonality, calendar and competitor effects genuinely shift the
+optimal price over the horizon.
 """
 
 from __future__ import annotations
@@ -22,6 +36,29 @@ class DemandModel:
 
     cfg: EnvConfig
 
+    def __post_init__(self) -> None:
+        """Guarantee an interior optimum: a(t) > b*c for every day in the
+        horizon (evaluated at the neutral competitor level cbar = ref_price).
+        Below this threshold the profit-maximising price collapses to the
+        marginal cost / lower bound and the model degenerates."""
+        cfg = self.cfg
+        threshold = cfg.b * cfg.unit_cost
+        worst_day, worst_a = 0, math.inf
+        for t in range(cfg.horizon):
+            a_t = (
+                cfg.a0 * self.seasonal_factor(t) * self.calendar_factor(t)
+                + cfg.d * cfg.ref_price
+            )
+            if a_t < worst_a:
+                worst_a, worst_day = a_t, t
+        if not worst_a > threshold:
+            raise ValueError(
+                "linear demand requires an interior optimum a(t) > b*unit_cost "
+                f"for all t; violated at day {worst_day}: a(t)={worst_a:.4f} "
+                f"<= b*c={threshold:.4f} (a0={cfg.a0}, b={cfg.b}, d={cfg.d}, "
+                f"unit_cost={cfg.unit_cost}, ref_price={cfg.ref_price})."
+            )
+
     # -- calendar effects ---------------------------------------------------
     def seasonal_factor(self, day: int) -> float:
         """Annual seasonal multiplier (sinusoidal), centred on 1.0."""
@@ -38,35 +75,29 @@ class DemandModel:
             factor += self.cfg.holiday_uplift
         return factor
 
-    def competitor_factor(self, price: float, competitor_prices) -> float:
-        """Demand multiplier from relative price position vs competitors.
-
-        Cheaper than the field => >1 (gain share); pricier => <1.
-        """
-        comp = np.asarray(competitor_prices, dtype=float)
-        if comp.size == 0:
-            return 1.0
-        ratio = float(np.mean(comp)) / max(price, 1e-9)
-        # constant-cross-elasticity style response, clipped to stay sane
-        return float(np.clip(ratio ** self.cfg.cross_elasticity, 0.25, 4.0))
-
     # -- core demand --------------------------------------------------------
+    def intercept(self, competitor_prices, day: int) -> float:
+        """The time-varying linear intercept a(t) = a0*S(t)*C(t) + d*cbar(t)."""
+        comp = np.asarray(competitor_prices, dtype=float)
+        cbar = float(comp.mean()) if comp.size else self.cfg.ref_price
+        return (
+            self.cfg.a0 * self.seasonal_factor(day) * self.calendar_factor(day)
+            + self.cfg.d * cbar
+        )
+
     def expected_units(
         self,
         price: float,
         competitor_prices,
         day: int,
     ) -> float:
-        """Expected (noise-free) units sold for the period."""
+        """Expected (noise-free) units sold for the period.
+
+        q(p, t) = max(0, a(t) - b * p), with a(t) the linear intercept above.
+        """
         price = float(np.clip(price, self.cfg.price_min, self.cfg.price_max))
-        own = (price / self.cfg.ref_price) ** (-self.cfg.elasticity)
-        units = (
-            self.cfg.base_demand
-            * own
-            * self.competitor_factor(price, competitor_prices)
-            * self.seasonal_factor(day)
-            * self.calendar_factor(day)
-        )
+        a = self.intercept(competitor_prices, day)
+        units = a - self.cfg.b * price
         return float(max(units, 0.0))
 
     def sample_units(
@@ -104,7 +135,12 @@ class DemandModel:
         day: int,
         grid: int = 200,
     ) -> float:
-        """Profit-maximising price on a dense grid (the theoretical optimum)."""
+        """Profit-maximising price on a dense grid (the theoretical optimum).
+
+        For linear demand the closed form is p*(t) = (a(t)/b + c)/2 clamped to
+        the band; the grid search agrees to grid resolution and stays correct
+        if the optimum falls outside the band.
+        """
         prices = np.linspace(self.cfg.price_min, self.cfg.price_max, grid)
         profits = [self.expected_profit(p, competitor_prices, day) for p in prices]
         return float(prices[int(np.argmax(profits))])

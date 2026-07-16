@@ -63,9 +63,11 @@ def test_calibration_from_synthetic_uci(tmp_path):
 
     result = calibrate(tmp_path)
     assert "UCI Online Retail II" in result.sources_used
-    # the descriptive slope -> demand-sensitivity parameter should land in a
-    # plausible band (this is NOT a claim to have identified the true elasticity)
-    assert 0.8 < result.config.elasticity < 3.0
+    # price sensitivity b is SET to match a literature elasticity (eps_target),
+    # NOT measured from the data; the implied elasticity at p_ref equals it.
+    cfg = result.config
+    implied = cfg.b * cfg.ref_price / cfg.base_demand
+    assert implied == pytest.approx(2.0, rel=1e-3)
 
 
 def test_sanity_report_passes_on_defaults():

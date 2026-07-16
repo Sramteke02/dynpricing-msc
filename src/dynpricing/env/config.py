@@ -28,10 +28,11 @@ class EnvConfig:
     price_max: float = 20.0          # highest allowed price
     init_price: float = 10.0         # opening price at reset
 
-    # --- Demand model ------------------------------------------------------
-    base_demand: float = 120.0       # expected units/day at ref price, neutral season
-    elasticity: float = 1.8          # own-price elasticity (>0; higher = more sensitive)
-    cross_elasticity: float = 0.6    # sensitivity to competitor price ratio
+    # --- Demand model (linear, differentiated Bertrand) --------------------
+    base_demand: float = 120.0       # q_ref: expected units/day at ref price, neutral season
+    a0: float = 288.0                # demand intercept (units at p=0, cbar=0, neutral season)
+    b: float = 24.0                  # own-price sensitivity: dq/dp = -b
+    d: float = 7.2                   # cross-price sensitivity: dq/dcbar = +d
     noise_cv: float = 0.10           # coefficient of variation of multiplicative demand noise
 
     # --- Competition -------------------------------------------------------
@@ -64,8 +65,8 @@ class EnvConfig:
             raise ValueError("require 0 < price_min < price_max")
         if not (self.price_min <= self.init_price <= self.price_max):
             raise ValueError("init_price must lie within [price_min, price_max]")
-        if self.elasticity <= 0:
-            raise ValueError("elasticity must be positive")
+        if self.b <= 0:
+            raise ValueError("own-price sensitivity b must be positive")
         if self.horizon <= 0:
             raise ValueError("horizon must be positive")
 
