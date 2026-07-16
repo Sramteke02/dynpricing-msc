@@ -3,28 +3,30 @@
 Real datasets are used **once, offline, only to calibrate** the environment so
 that it behaves plausibly. The agents never train on this data and the true
 demand function is never derived from it directly — we only extract aggregate
-parameters (price ranges, base volume, a demand-sensitivity parameter,
-seasonality).
+anchors (reference price, reference volume, unit cost, price band, seasonality).
 
-IMPORTANT — identification caveat. The numbers produced here are *plausible
-parameter values that place the simulation in a realistic regime*. They are
-**not** identified causal elasticities. Price and quantity in observational
-retail data are jointly determined (by demand and supply/assortment decisions),
-so a descriptive log-log price-quantity slope is biased for the structural
-elasticity. We deliberately use it only to choose a sensible value for the
-simulation's *own* (fully controlled, transparent) demand parameter, and we do
-not claim to have measured the real-world elasticity anywhere.
+IMPORTANT — we do NOT regress an elasticity from the data. Price and quantity
+in observational retail data are jointly determined, so a descriptive log-log
+price-quantity slope is biased for the structural elasticity (that is where the
+old, inelastic 0.771 came from). For a **linear (differentiated-Bertrand)**
+demand q = max(0, a0*S(t)*C(t) - b*p + d*cbar), we instead set the own-price
+sensitivity ``b`` from a **literature target elasticity** ``eps_target`` at the
+reference point:
+
+    b  = eps_target * q_ref / p_ref          (eps_target ~ 2.0, configurable)
+    d  = cross_ratio * b                      (cross-price sensitivity; sweepable)
+    a0 = q_ref + b*p_ref - d*p_ref            (so q(p_ref, cbar=p_ref) = q_ref)
+
+``p_ref``, ``q_ref`` and ``unit_cost`` are sourced from the data exactly as
+before; only the sensitivity is imposed, not measured.
 
 Supported sources (all optional; place raw files under ``data/``):
 
 * UCI Online Retail II  -> ``data/online_retail_II.xlsx`` (or ``.csv``)
-    Derives plausible price ranges, base volume, and a demand-sensitivity
-    parameter from a *descriptive* log-log price-quantity slope (not an
-    identified elasticity; see the caveat above).
+    Reference price/volume/cost anchors and the price band.
 * ONS Retail Sales Index -> ``data/ons_retail_sales.csv``
     Estimates the seasonal amplitude from monthly index values.
-* UK Bank Holidays       -> fetched live from the gov.uk API if requested,
-    used to mark holiday days within the episode horizon.
+* UK Bank Holidays       -> fetched live from the gov.uk API if requested.
 
 If a source is missing, the corresponding parameters fall back to documented
 synthetic defaults, so calibration always succeeds.
@@ -32,7 +34,6 @@ synthetic defaults, so calibration always succeeds.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,6 +47,7 @@ class CalibrationResult:
     config: EnvConfig
     sources_used: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    eps_target: float | None = None
 
     def summary(self) -> str:
         lines = ["Calibration summary", "-" * 40]
@@ -53,15 +55,22 @@ class CalibrationResult:
         for n in self.notes:
             lines.append(f"  - {n}")
         c = self.config
+        implied = c.b * c.ref_price / c.base_demand if c.base_demand else float("nan")
         lines += [
             "-" * 40,
-            f"ref_price        = {c.ref_price:.3f}",
-            f"unit_cost        = {c.unit_cost:.3f}",
-            f"price band       = [{c.price_min:.2f}, {c.price_max:.2f}]",
-            f"base_demand      = {c.base_demand:.1f}",
-            f"demand_sens.     = {c.elasticity:.3f}  (simulation parameter; NOT an identified elasticity)",
-            f"seasonal_amp     = {c.seasonal_amplitude:.3f}",
-            f"init_inventory   = {c.init_inventory}",
+            f"ref_price          = {c.ref_price:.3f}",
+            f"unit_cost          = {c.unit_cost:.3f}",
+            f"price band         = [{c.price_min:.2f}, {c.price_max:.2f}]",
+            f"base_demand(q_ref) = {c.base_demand:.1f}",
+            f"a0 (intercept)     = {c.a0:.4f}",
+            f"b  (own-price)     = {c.b:.4f}",
+            f"d  (cross-price)   = {c.d:.4f}",
+            f"implied elasticity @ p_ref = {implied:.3f}",
+            f"eps_target         = {self.eps_target if self.eps_target is not None else 'n/a'}",
+            "NOTE: price sensitivity b is SET to match a LITERATURE elasticity",
+            "      (eps_target); it is NOT measured / regressed from the data.",
+            f"seasonal_amp       = {c.seasonal_amplitude:.3f}",
+            f"init_inventory     = {c.init_inventory}",
         ]
         return "\n".join(lines)
 
@@ -69,13 +78,18 @@ class CalibrationResult:
 # --------------------------------------------------------------------------
 # Individual source calibrators
 # --------------------------------------------------------------------------
-def _calibrate_from_uci(path: Path, result: CalibrationResult, overrides: dict) -> None:
-    """Derive plausible price band, base volume and demand-sensitivity from UCI.
+def _calibrate_from_uci(
+    path: Path,
+    result: CalibrationResult,
+    overrides: dict,
+    eps_target: float,
+    cross_ratio: float,
+) -> None:
+    """Derive the linear-demand parameters from UCI reference anchors.
 
-    The demand-sensitivity number comes from a *descriptive* binned log-log
-    slope of quantity on price. This is NOT an identified elasticity (price and
-    quantity are jointly determined); it is only used to place the simulation's
-    own demand parameter in a realistic regime.
+    We take the reference price (median), a smoothed reference volume, the unit
+    cost and the price band from the data, then IMPOSE the own-price
+    sensitivity from a literature elasticity (we do not regress it).
     """
     import pandas as pd
 
@@ -98,34 +112,41 @@ def _calibrate_from_uci(path: Path, result: CalibrationResult, overrides: dict) 
         result.notes.append("UCI: too few clean rows; skipped")
         return
 
-    # robust price band and reference from quantiles
-    ref_price = float(df[price_col].median())
+    # robust reference price/volume/cost and price band from the data
+    ref_price = round(float(df[price_col].median()), 3)
     p_lo = float(df[price_col].quantile(0.05))
     p_hi = float(df[price_col].quantile(0.95))
-    # daily-equivalent base volume per product line (aggregate, smoothed)
-    base_demand = float(np.clip(df[qty_col].median() * 12.0, 20.0, 500.0))
+    # daily-equivalent reference volume per product line (aggregate, smoothed)
+    q_ref = round(float(np.clip(df[qty_col].median() * 12.0, 20.0, 500.0)), 1)
+    unit_cost = round(ref_price * 0.4, 3)
 
-    # descriptive (NOT identified) log-log price-quantity slope, binned for noise
-    slope = _descriptive_price_quantity_slope(
-        df[price_col].to_numpy(), df[qty_col].to_numpy()
-    )
-    sensitivity = float(np.clip(slope, 0.5, 4.0))
+    # IMPOSE the own-price sensitivity from a literature elasticity (NOT regressed)
+    b = eps_target * q_ref / ref_price
+    d = cross_ratio * b
+    a0 = q_ref + b * ref_price - d * ref_price
 
     overrides.update(
-        ref_price=round(ref_price, 3),
-        init_price=round(ref_price, 3),
+        ref_price=ref_price,
+        init_price=ref_price,
         price_min=round(max(0.1, min(p_lo, ref_price * 0.5)), 3),
         price_max=round(max(p_hi, ref_price * 1.8), 3),
-        unit_cost=round(ref_price * 0.4, 3),
-        base_demand=round(base_demand, 1),
-        elasticity=round(sensitivity, 3),  # simulation demand-sensitivity param
+        unit_cost=unit_cost,
+        base_demand=q_ref,
+        a0=a0,
+        b=b,
+        d=d,
+        # competitor prices anchored near the (new) reference price, so cbar is
+        # inside the band. The old (10.0, 10.5) was built for ref_price=10.
+        competitor_init=(2.0, 2.2),
     )
     result.sources_used.append("UCI Online Retail II")
     result.notes.append(
-        f"UCI: ref_price={ref_price:.2f}; demand-sensitivity param set to "
-        f"{sensitivity:.2f} from a DESCRIPTIVE log-log slope "
-        f"(not an identified elasticity)."
+        f"UCI: p_ref={ref_price:.2f}, q_ref={q_ref:.1f}, unit_cost={unit_cost:.2f}. "
+        f"Own-price sensitivity b={b:.4f} SET from literature elasticity "
+        f"eps_target={eps_target} (NOT regressed from the data); "
+        f"d={cross_ratio}*b={d:.4f}, a0={a0:.4f}."
     )
+    result.notes.append("UCI: competitor_init set to (2.0, 2.2), near p_ref.")
 
 
 def _calibrate_from_ons(path: Path, result: CalibrationResult, overrides: dict) -> None:
@@ -181,18 +202,25 @@ def calibrate(
     *,
     fetch_holidays: bool = False,
     base: EnvConfig | None = None,
+    eps_target: float = 2.0,
+    cross_ratio: float = 0.3,
 ) -> CalibrationResult:
-    """Produce an :class:`EnvConfig` calibrated from whatever data is present."""
+    """Produce an :class:`EnvConfig` calibrated from whatever data is present.
+
+    ``eps_target`` is the literature own-price elasticity used to set the linear
+    demand sensitivity ``b`` (configurable / sweepable); ``cross_ratio`` sets the
+    cross-price sensitivity as ``d = cross_ratio * b``.
+    """
     data_dir = Path(data_dir)
     base = base or EnvConfig()
     overrides: dict = {}
-    result = CalibrationResult(config=base)
+    result = CalibrationResult(config=base, eps_target=eps_target)
 
     uci = _find(data_dir, ["online_retail_II.xlsx", "online_retail_II.csv",
                            "online_retail_ii.xlsx", "online_retail.csv"])
     if uci is not None:
         try:
-            _calibrate_from_uci(uci, result, overrides)
+            _calibrate_from_uci(uci, result, overrides, eps_target, cross_ratio)
         except Exception as exc:
             result.notes.append(f"UCI: calibration failed ({exc}); using defaults")
 
@@ -223,9 +251,10 @@ def calibrate(
 def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
     """Check the calibrated demand curve behaves sensibly.
 
-    Confirms (a) demand falls as price rises, (b) the drop is of a plausible
-    magnitude, and reports the simulation's demand-sensitivity parameter. Returns
-    the report text and a boolean ``ok`` flag.
+    Confirms (a) demand falls as price rises, (b) the +10% arc response is of a
+    plausible magnitude, (c) the implied elasticity at the reference price is in
+    a sane band, and (d) the interior condition a(t) > b*c holds. Returns the
+    report text and a boolean ``ok`` flag.
     """
     from dynpricing.env.demand import DemandModel
 
@@ -236,7 +265,7 @@ def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
     d_hi = dm.expected_units(p_hi, comps, day=0)
     d_ref = dm.expected_units(cfg.ref_price, comps, day=0)
 
-    # a +10% price change around the reference: implied arc sensitivity
+    # a +10% price change around the reference: implied arc response
     p1 = min(cfg.ref_price * 1.10, p_hi)
     d0 = dm.expected_units(cfg.ref_price, comps, day=0)
     d1 = dm.expected_units(p1, comps, day=0)
@@ -244,10 +273,18 @@ def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
     pct_demand = (d1 - d0) / d0 if d0 else 0.0
     arc = (pct_demand / pct_price) if pct_price else 0.0
 
-    monotone = d_lo > d_ref > d_hi > 0
-    plausible_param = 0.5 <= cfg.elasticity <= 4.0
+    implied = cfg.b * cfg.ref_price / cfg.base_demand if cfg.base_demand else float("nan")
+    cbar = float(np.mean(cfg.competitor_init)) if len(cfg.competitor_init) else cfg.ref_price
+    a_min = min(
+        cfg.a0 * dm.seasonal_factor(t) * dm.calendar_factor(t) + cfg.d * cbar
+        for t in range(cfg.horizon)
+    )
+
+    monotone = d_lo > d_ref >= d_hi >= 0.0
+    plausible_param = 0.5 <= implied <= 4.0
     plausible_drop = -6.0 < arc < -0.1  # downward and not absurdly steep
-    ok = bool(monotone and plausible_param and plausible_drop)
+    interior = a_min > cfg.b * cfg.unit_cost
+    ok = bool(monotone and plausible_param and plausible_drop and interior)
 
     lines = [
         "Demand-curve sanity check",
@@ -256,14 +293,16 @@ def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
         f"expected units @ ref       ({cfg.ref_price:.2f}) : {d_ref:8.1f}",
         f"expected units @ price_max ({p_hi:.2f}) : {d_hi:8.1f}",
         f"demand falls as price rises          : {'YES' if monotone else 'NO'}",
-        f"demand-sensitivity parameter         : {cfg.elasticity:.3f} "
+        f"implied elasticity @ p_ref           : {implied:.3f} "
         f"({'in plausible band' if plausible_param else 'OUT OF BAND'})",
         f"implied arc response to +10% price   : {pct_demand*100:+.1f}% units "
         f"(arc slope {arc:+.2f})",
         f"plausible magnitude                  : {'YES' if plausible_drop else 'NO'}",
+        f"interior optimum a(t) > b*c          : {'YES' if interior else 'NO'} "
+        f"(min a(t)={a_min:.1f}, b*c={cfg.b*cfg.unit_cost:.1f})",
         "-" * 40,
-        f"NOTE: the sensitivity figure is a simulation parameter chosen to place",
-        f"      the market in a realistic regime; it is NOT a measured elasticity.",
+        "NOTE: price sensitivity b is SET to match a literature elasticity;",
+        "      it is NOT a measured/regressed elasticity from the data.",
         f"OVERALL: {'PASS' if ok else 'FAIL'}",
     ]
     return "\n".join(lines), ok
@@ -272,39 +311,6 @@ def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
-def _descriptive_price_quantity_slope(
-    prices: np.ndarray, qty: np.ndarray, bins: int = 30
-) -> float:
-    """Descriptive |slope| of log-quantity on log-price (binned to reduce noise).
-
-    This is a *correlational* summary of the data, returned as a positive
-    magnitude for convenience. It is NOT an identified own-price elasticity
-    (price and quantity are jointly determined) and must not be reported as one.
-    """
-    p = np.asarray(prices, dtype=float)
-    q = np.asarray(qty, dtype=float)
-    mask = (p > 0) & (q > 0)
-    p, q = p[mask], q[mask]
-    if p.size < 20:
-        return 1.8
-    # bin by price quantiles, average log-quantity per bin to reduce noise
-    edges = np.quantile(p, np.linspace(0, 1, bins + 1))
-    edges = np.unique(edges)
-    if edges.size < 3:
-        return 1.8
-    idx = np.clip(np.digitize(p, edges[1:-1]), 0, edges.size - 2)
-    lp, lq = [], []
-    for b in range(edges.size - 1):
-        sel = idx == b
-        if sel.sum() >= 5:
-            lp.append(math.log(np.mean(p[sel])))
-            lq.append(math.log(np.mean(q[sel])))
-    if len(lp) < 3:
-        return 1.8
-    slope, _ = np.polyfit(lp, lq, 1)
-    return abs(float(slope))
-
-
 def _first_present(df, candidates):
     for c in candidates:
         if c in df.columns:

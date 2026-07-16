@@ -5,13 +5,14 @@
   "price_max": 9.95,
   "init_price": 2.1,
   "base_demand": 36.0,
-  "elasticity": 0.771,
-  "cross_elasticity": 0.6,
+  "a0": 86.4,
+  "b": 34.285714285714285,
+  "d": 10.285714285714285,
   "noise_cv": 0.1,
   "n_competitors": 2,
   "competitor_init": [
-    10.0,
-    10.5
+    2.0,
+    2.2
   ],
   "competitor_drift": 0.02,
   "competitor_reversion": 0.1,
@@ -24,7 +25,7 @@
   "init_inventory": 12000,
   "allow_stockout_termination": true,
   "discount": 0.99,
-  "calibration_notes": "UCI: ref_price=2.10; demand-sensitivity param set to 0.77 from a DESCRIPTIVE log-log slope (not an identified elasticity).",
+  "calibration_notes": "UCI: p_ref=2.10, q_ref=36.0, unit_cost=0.84. Own-price sensitivity b=34.2857 SET from literature elasticity eps_target=2.0 (NOT regressed from the data); d=0.3*b=10.2857, a0=86.4000.; UCI: competitor_init set to (2.0, 2.2), near p_ref.",
   "calibration_sources": [
     "UCI Online Retail II"
   ]
