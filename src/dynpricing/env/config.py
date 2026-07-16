@@ -42,7 +42,7 @@ class EnvConfig:
     competitor_reversion: float = 0.10  # pull back toward ref_price each step
 
     # --- Seasonality / calendar -------------------------------------------
-    horizon: int = 90               # selling horizon (days) per episode
+    horizon: int = 365              # selling horizon (days): a full seasonal cycle
     seasonal_amplitude: float = 0.25  # annual sinusoid amplitude on demand
     weekend_uplift: float = 0.15      # extra demand on weekends
     holiday_uplift: float = 0.40      # extra demand on modelled holidays
@@ -50,7 +50,7 @@ class EnvConfig:
     start_day_of_year: int = 0        # phase of the annual seasonal cycle
 
     # --- Inventory ---------------------------------------------------------
-    init_inventory: int = 12000
+    init_inventory: int = 48000     # slack over a 365-day horizon (scarce x0.3 still binds)
     allow_stockout_termination: bool = True
 
     # --- MDP ---------------------------------------------------------------
