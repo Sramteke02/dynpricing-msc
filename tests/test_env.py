@@ -8,12 +8,36 @@ from dynpricing.env.demand import DemandModel
 from dynpricing.env.market_env import MarketEnv, ACTIONS
 
 
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+def _intercept(cfg, dm, day, cbar):
+    """a(t) = a0*S(t)*C(t) + d*cbar, the linear-demand intercept."""
+    return cfg.a0 * dm.seasonal_factor(day) * dm.calendar_factor(day) + cfg.d * cbar
+
+
+def _numeric_pstar(cfg, dm, comps, day, grid=40001):
+    """Profit-maximising price by dense-grid search over expected profit."""
+    ps = np.linspace(cfg.price_min, cfg.price_max, grid)
+    profits = np.array([dm.expected_profit(p, comps, day) for p in ps])
+    return float(ps[int(np.argmax(profits))]), float(ps[1] - ps[0])
+
+
+def _seasonal_days(dm):
+    """Days of the annual seasonal peak, trough, and a mid (S~=1) point."""
+    S = np.array([dm.seasonal_factor(t) for t in range(365)])
+    return int(np.argmax(S)), int(np.argmin(S)), int(np.argmin(np.abs(S - 1.0)))
+
+
+# ---------------------------------------------------------------------------
+# demand-form tests (linear / differentiated-Bertrand)
+# ---------------------------------------------------------------------------
 def test_demand_falls_as_price_rises():
     cfg = EnvConfig()
     dm = DemandModel(cfg)
     lo = dm.expected_units(cfg.price_min, cfg.competitor_init, day=0)
     hi = dm.expected_units(cfg.price_max, cfg.competitor_init, day=0)
-    assert lo > hi > 0  # downward-sloping demand
+    assert lo > hi >= 0  # downward-sloping demand, clamped at zero
 
 
 def test_demand_magnitude_plausible():
@@ -24,6 +48,79 @@ def test_demand_magnitude_plausible():
     assert 0.3 * cfg.base_demand < at_ref < 3 * cfg.base_demand
 
 
+def test_demand_strictly_decreasing_across_band():
+    """(1) q(p) strictly decreasing in p wherever demand is positive, and
+    never increasing anywhere in the band."""
+    cfg = EnvConfig(weekend_uplift=0.0)  # isolate the seasonal factor
+    dm = DemandModel(cfg)
+    comps = [cfg.ref_price]
+    for day in _seasonal_days(dm):
+        ps = np.linspace(cfg.price_min, cfg.price_max, 400)
+        q = np.array([dm.expected_units(p, comps, day) for p in ps])
+        diffs = np.diff(q)
+        assert np.all(diffs <= 1e-9)                    # never increasing
+        positive = q[:-1] > 1e-9
+        assert positive.any()
+        assert np.all(diffs[positive] < 0)              # strict where q > 0
+
+
+def test_demand_zero_at_choke_and_never_negative():
+    """(2) q == 0 exactly at the choke price a(t)/b, and never negative
+    anywhere in the band (the max(0, .) clamp)."""
+    cfg = EnvConfig(weekend_uplift=0.0)
+    dm = DemandModel(cfg)
+    comps = [cfg.ref_price]
+    cbar = float(np.mean(comps))
+    for day in _seasonal_days(dm):
+        a = _intercept(cfg, dm, day, cbar)
+        choke = a / cfg.b
+        assert cfg.price_min <= choke <= cfg.price_max   # choke sits in the band
+        assert dm.expected_units(choke, comps, day) == pytest.approx(0.0, abs=1e-9)
+        assert dm.expected_units(choke * 0.99, comps, day) > 0.0
+        for p in np.linspace(cfg.price_min, cfg.price_max, 200):
+            assert dm.expected_units(p, comps, day) >= 0.0
+
+
+def test_numeric_argmax_matches_closed_form_pstar():
+    """(3) dense-grid argmax of expected profit == closed form
+    p*(t) = (a(t)/b + c)/2 at seasonal peak, trough, and mid."""
+    cfg = EnvConfig(weekend_uplift=0.0)
+    dm = DemandModel(cfg)
+    comps = [cfg.ref_price]
+    cbar = float(np.mean(comps))
+    for day in _seasonal_days(dm):
+        p_numeric, step = _numeric_pstar(cfg, dm, comps, day)
+        a = _intercept(cfg, dm, day, cbar)
+        p_closed = (a / cfg.b + cfg.unit_cost) / 2.0
+        assert cfg.price_min < p_closed < cfg.price_max
+        assert abs(p_numeric - p_closed) <= 2 * step
+
+
+def test_pstar_differs_between_seasonal_peak_and_trough():
+    """(4) REGRESSION: p*(peak) != p*(trough). This is the test that would
+    have caught the original isoelastic defect (constant p*), and it MUST
+    fail against the old q = K(t)*p^-eta demand."""
+    cfg = EnvConfig(weekend_uplift=0.0)
+    dm = DemandModel(cfg)
+    comps = [cfg.ref_price]
+    peak, trough, _ = _seasonal_days(dm)
+    p_peak, _ = _numeric_pstar(cfg, dm, comps, peak)
+    p_trough, _ = _numeric_pstar(cfg, dm, comps, trough)
+    assert abs(p_peak - p_trough) > 0.1
+
+
+def test_interior_condition_a_gt_bc_over_horizon():
+    """(5) interior condition a(t) > b*c holds for every day in the horizon."""
+    cfg = EnvConfig()
+    dm = DemandModel(cfg)
+    cbar = float(np.mean(cfg.competitor_init))
+    for t in range(cfg.horizon):
+        assert _intercept(cfg, dm, t, cbar) > cfg.b * cfg.unit_cost
+
+
+# ---------------------------------------------------------------------------
+# environment-mechanics tests (demand-form agnostic)
+# ---------------------------------------------------------------------------
 def test_reward_is_margin_times_units():
     cfg = EnvConfig(noise_cv=0.0)  # deterministic
     env = MarketEnv(cfg)
