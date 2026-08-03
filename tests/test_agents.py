@@ -70,6 +70,55 @@ def test_gbm_trains_and_beats_random(cfg):
     assert gbm > rnd  # a learned demand model should beat random pricing
 
 
+def test_gbm_uniform_training_spans_the_price_band(cfg):
+    """Change 1: exploration must cover the whole band, not just its lower end."""
+    agent = build_agent("gbm_uniform", cfg, seed=0)
+    agent.train(make_env=lambda: MarketEnv(cfg), n_episodes=5, seed=0)
+    span = cfg.price_max - cfg.price_min
+    assert agent.train_price_min <= cfg.price_min + 0.05 * span
+    assert agent.train_price_max >= cfg.price_max - 0.05 * span
+
+
+def test_gbm_uniform_never_prices_above_its_training_range(cfg):
+    """Change 2: the clamp must hold even when training under-covers the band.
+
+    Trained with the *original* agent's drifting exploration, the training data
+    stops well short of price_max; the optimiser must then never select a price
+    above what it saw.
+    """
+    from dynpricing.agents.gbm_uniform_agent import UniformExplorationGBMAgent
+    from dynpricing.env.market_env import ACTIONS
+
+    agent = UniformExplorationGBMAgent(seed=0, uniform_exploration=False)
+    agent.train(make_env=lambda: MarketEnv(cfg), n_episodes=5, seed=0)
+    assert agent.train_price_max < cfg.price_max  # otherwise the test is vacuous
+
+    env = MarketEnv(cfg)
+    m = run_episode(agent, env, seed=0)
+    assert max(m.prices[1:]) <= agent.train_price_max + 1e-9
+    assert agent.n_clamp_binds > 0  # the clamp actually bound
+
+
+def test_gbm_uniform_beats_random(cfg):
+    """The counterpart to the xfail above.
+
+    Same features, same regressor, same myopic optimiser as `gbm` — only the
+    exploration and the clamp differ. If removing extrapolation past the
+    training range is what fixes the pathology, this must pass where the `gbm`
+    version xfails. See docs/gbm_extrapolation_diagnosis.md.
+    """
+    import numpy as np
+    from dynpricing.eval.harness import evaluate_agent
+
+    scen = Scenario("baseline", cfg)
+    seeds = range(5)
+    gbm_u = np.mean([m.gross_profit for m in
+                     evaluate_agent("gbm_uniform", cfg, scen, seeds,
+                                    agent_kwargs={"exploration_episodes": 15})])
+    rnd = np.mean([m.gross_profit for m in evaluate_agent("random", cfg, scen, seeds)])
+    assert gbm_u > rnd
+
+
 def test_llm_fallback_runs_without_key(cfg):
     agent = LLMAgent(force_fallback=True)
     assert not agent.using_llm

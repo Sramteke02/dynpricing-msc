@@ -13,6 +13,7 @@ from dynpricing.agents.baselines import (
     OracleAgent,
 )
 from dynpricing.agents.gbm_agent import GradientBoostingAgent
+from dynpricing.agents.gbm_uniform_agent import UniformExplorationGBMAgent
 from dynpricing.agents.llm_agent import LLMAgent
 from dynpricing.agents.oracle_dp import BackwardInductionOracle
 
@@ -23,6 +24,7 @@ AGENT_NAMES = (
     "competitor_match",
     "random",
     "gbm",
+    "gbm_uniform",
     "llm",
     "oracle",
 )
@@ -48,6 +50,14 @@ def build_agent(name: str, cfg: EnvConfig, *, seed: int = 0, **kwargs) -> Agent:
     if name == "gbm":
         return GradientBoostingAgent(
             exploration_episodes=kwargs.get("exploration_episodes", 40), seed=seed
+        )
+    if name == "gbm_uniform":
+        return UniformExplorationGBMAgent(
+            exploration_episodes=kwargs.get("exploration_episodes", 40),
+            seed=seed,
+            uniform_exploration=kwargs.get("uniform_exploration", True),
+            clamp_to_train_max=kwargs.get("clamp_to_train_max", True),
+            verbose=kwargs.get("verbose", False),
         )
     if name == "llm":
         llm_kwargs = {}
