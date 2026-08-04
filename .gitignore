@@ -14,6 +14,7 @@ venv/
 wandb/
 *.png
 !results/*.png
+!results/archive/*.png
 results/*.log
 
 # Data (large, downloaded separately)

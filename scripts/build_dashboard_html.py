@@ -20,6 +20,8 @@ Regenerate: ``python scripts/build_dashboard_html.py`` (see README).
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import json
 import re
 import sys
@@ -42,37 +44,113 @@ def read_json(path: Path):
     return json.loads(path.read_text()) if path.exists() else None
 
 
+# -- run provenance --------------------------------------------------------
+def config_provenance() -> dict | None:
+    """The config the runs were produced under, plus a content fingerprint."""
+    cfg = read_json(ROOT / "configs" / "calibrated.json")
+    if not cfg:
+        return None
+    blob = json.dumps(cfg, sort_keys=True, default=list).encode()
+    return {
+        "fingerprint": hashlib.sha256(blob).hexdigest()[:12],
+        "horizon": cfg.get("horizon"),
+        "price_min": cfg.get("price_min"),
+        "price_max": cfg.get("price_max"),
+        "init_inventory": cfg.get("init_inventory"),
+        "seasonal_amplitude": cfg.get("seasonal_amplitude"),
+    }
+
+
+METRIC_COLS = ("gross_profit", "revenue", "market_share", "pricing_stability", "n_steps")
+
+
+def _load_rows(path: Path) -> list[dict]:
+    with path.open() as fh:
+        return list(csv.DictReader(fh))
+
+
+def check_run_compatibility() -> dict | None:
+    """Compare the two committed runs cell-by-cell, not just on shared means.
+
+    The ladder merges a 6-agent run with the 5-agent gbm_uniform run. That is
+    only legitimate if both were produced under the same environment: same
+    scenarios, same seed set, same horizon behaviour, and identical numbers
+    wherever they overlap. Everything here is recomputed at build time so a
+    future mismatch surfaces on the page instead of being silently merged.
+    """
+    old_p = ROOT / "results" / "metrics.csv"
+    new_p = ROOT / "results" / "gbm_uniform" / "metrics.csv"
+    if not old_p.exists() or not new_p.exists():
+        return None
+    old, new = _load_rows(old_p), _load_rows(new_p)
+
+    scen_old = sorted({r["scenario"] for r in old})
+    scen_new = sorted({r["scenario"] for r in new})
+    seeds_old = sorted({int(r["seed"]) for r in old})
+    seeds_new = sorted({int(r["seed"]) for r in new})
+
+    index = {(r["agent"], r["scenario"], r["seed"]): r for r in old}
+    worst: dict[str, float] = {c: 0.0 for c in METRIC_COLS}
+    n_shared = 0
+    for r in new:
+        key = (r["agent"], r["scenario"], r["seed"])
+        if key not in index:
+            continue
+        n_shared += 1
+        for c in METRIC_COLS:
+            worst[c] = max(worst[c], abs(float(r[c]) - float(index[key][c])))
+
+    steps = [int(r["n_steps"]) for r in old + new]
+    checks = {
+        "scenarios match": scen_old == scen_new,
+        "seed sets match": seeds_old == seeds_new,
+        "shared cells identical": all(v == 0.0 for v in worst.values()),
+    }
+    return {
+        "compatible": all(checks.values()),
+        "checks": checks,
+        "n_shared_rows": n_shared,
+        "worst_abs_diff": worst,
+        "scenarios": scen_old,
+        "n_seeds": len(seeds_new),
+        "seed_lo": seeds_new[0] if seeds_new else None,
+        "seed_hi": seeds_new[-1] if seeds_new else None,
+        "n_steps_min": min(steps) if steps else None,
+        "n_steps_max": max(steps) if steps else None,
+    }
+
+
 # -- ladder ----------------------------------------------------------------
-def build_ladder() -> tuple[dict, list[str]]:
-    """Merge the committed aggregated runs into {scenario: [agent rows]}."""
+def build_ladder(compat: dict | None) -> tuple[dict, list[str]]:
+    """Merge the committed aggregated runs into {scenario: [agent rows]}.
+
+    The merge happens only if ``check_run_compatibility`` says the two runs are
+    the same experiment; otherwise the older run is dropped and the page says so.
+    """
     notes: list[str] = []
     newer = read_json(ROOT / "results" / "gbm_uniform" / "metrics_aggregated.json")
     older = read_json(ROOT / "results" / "metrics_aggregated.json")
     if newer is None:
         return {}, ["results/gbm_uniform/metrics_aggregated.json is missing"]
 
-    # Guard the merge: shared (agent, scenario) cells must agree, or we drop the
-    # older run rather than mix two different experiments on one axis.
     merged: dict[tuple[str, str], dict] = {}
     for entry in newer:
         merged[(entry["agent"], entry["scenario"])] = entry
     if older:
-        mismatch = []
-        for entry in older:
-            key = (entry["agent"], entry["scenario"])
-            if key in merged:
-                a = merged[key]["gross_profit_mean"]
-                b = entry["gross_profit_mean"]
-                if abs(a - b) > 1e-6:
-                    mismatch.append(f"{key[0]}/{key[1]}")
-        if mismatch:
-            notes.append("older run disagrees on " + ", ".join(sorted(set(mismatch)))
-                         + " — showing the gbm_uniform run only")
-        else:
+        if compat and compat["compatible"]:
             for entry in older:
                 merged.setdefault((entry["agent"], entry["scenario"]), entry)
-            notes.append("Agents are merged from two committed runs; every shared "
-                         "episode row agrees exactly (max |Δ| = 0.000000).")
+            worst = max(compat["worst_abs_diff"].values())
+            notes.append(
+                f"Agents are merged from two committed runs, verified to be the "
+                f"same experiment: identical scenarios and seeds, and all "
+                f"{compat['n_shared_rows']} shared episode rows agree on every "
+                f"metric (max |Δ| = {worst:.6f}).")
+        else:
+            failed = ([k for k, v in compat["checks"].items() if not v]
+                      if compat else ["the older run could not be read"])
+            notes.append("NOT merged — the two runs are not the same experiment "
+                         f"({'; '.join(failed)}). Showing the gbm_uniform run only.")
 
     by_scenario: dict[str, list[dict]] = {}
     for (agent, scenario), entry in merged.items():
@@ -355,6 +433,13 @@ th { color: var(--text-secondary); font-weight: 600; }
 .tablewrap[hidden] { display: none; }
 .empty-panel { border: 1px dashed var(--axis); border-radius: 8px; padding: 1.5rem;
   color: var(--text-secondary); font-size: .875rem; text-align: center; }
+.prov { font-size: .78125rem; color: var(--text-secondary); border: 1px solid var(--border);
+  border-radius: 8px; padding: .55rem .7rem; margin: 0 0 1rem;
+  display: flex; gap: .35rem 1.1rem; flex-wrap: wrap; align-items: baseline; }
+.prov b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.prov .ok { color: var(--good); font-weight: 600; }
+.prov.warn { border-color: var(--warning); border-width: 2px; }
+.prov .bad { color: var(--warning); font-weight: 600; }
 footer { color: var(--text-secondary); font-size: .78125rem; padding-top: .5rem; }
 footer code { font-size: .95em; }
 """
@@ -385,6 +470,7 @@ BODY = """</head>
     </div>
   </div>
   <p class="section-note" id="ladder-note"></p>
+  <div id="provenance"></div>
   <div class="chart" id="ladder-chart"></div>
   <div class="tablewrap" id="ladder-table" hidden></div>
 </section>
@@ -487,6 +573,38 @@ function renderKpis() {
     }
     host.appendChild(card);
   }
+}
+
+/* ---------- run provenance ---------- */
+function renderProvenance() {
+  const host = document.getElementById('provenance');
+  host.replaceChildren();
+  const c = DATA.config, k = DATA.compat;
+  if (!c && !k) return;
+  const box = html('div', 'prov' + (k && !k.compatible ? ' warn' : ''));
+  const add = (label, value, cls) => {
+    const s = html('span');
+    s.appendChild(document.createTextNode(label + ' '));
+    s.appendChild(html('b', cls, value));
+    box.appendChild(s);
+  };
+  if (c) {
+    add('config', c.fingerprint);
+    add('horizon', String(c.horizon));
+    add('band', `[${c.price_min.toFixed(3)}, ${c.price_max.toFixed(3)}]`);
+    add('inventory', c.init_inventory.toLocaleString());
+  }
+  if (k) {
+    add('seeds', `${k.seed_lo}–${k.seed_hi} (${k.n_seeds})`);
+    add('episode steps', `${k.n_steps_min}–${k.n_steps_max}`);
+    if (k.compatible) {
+      add('same experiment', 'verified', 'ok');
+    } else {
+      const failed = Object.keys(k.checks).filter(n => !k.checks[n]);
+      add('runs differ', failed.join('; '), 'bad');
+    }
+  }
+  host.appendChild(box);
 }
 
 /* ---------- 2. agent ladder ---------- */
@@ -814,20 +932,26 @@ sel.value = DATA.scenarios.includes('baseline') ? 'baseline' : DATA.scenarios[0]
 sel.addEventListener('change', renderLadder);
 document.getElementById('footer').textContent = DATA.footer;
 
-function renderAll() { renderKpis(); renderLadder(); renderAmplitude(); renderPaths(); }
+function renderAll() {
+  renderKpis(); renderProvenance(); renderLadder(); renderAmplitude(); renderPaths();
+}
 renderAll();
 addEventListener('resize', () => { renderLadder(); renderAmplitude(); renderPaths(); });
 """
 
 
 def main() -> int:
-    ladder, ladder_notes = build_ladder()
+    compat = check_run_compatibility()
+    config = config_provenance()
+    ladder, ladder_notes = build_ladder(compat)
     if not ladder:
         print("[error] no ladder data found under results/", file=sys.stderr)
         return 1
     paired = read_json(ROOT / "results" / "gbm_uniform" / "paired_gbm_uniform.json")
     data = {
         "kpis": build_kpis(ladder, paired),
+        "config": config,
+        "compat": compat,
         "ladder": ladder,
         "ladderNotes": ladder_notes,
         "scenarios": sorted(ladder.keys()),
@@ -849,6 +973,18 @@ def main() -> int:
         print(f"     KPI {k['id']:<20} {state}")
     print(f"     amplitude panel: {'present' if data['amplitude'] else 'EMPTY'}")
     print(f"     price paths    : {'present' if data['paths'] else 'EMPTY'}")
+    if config:
+        print(f"     config         : {config['fingerprint']} horizon={config['horizon']} "
+              f"band=[{config['price_min']:.3f}, {config['price_max']:.3f}]")
+    if compat:
+        for name, passed in compat["checks"].items():
+            print(f"     [{'PASS' if passed else 'FAIL'}] {name}")
+        print(f"     shared rows    : {compat['n_shared_rows']} "
+              f"(worst |Δ| {max(compat['worst_abs_diff'].values()):.6f} "
+              f"across {', '.join(METRIC_COLS)})")
+        if not compat["compatible"]:
+            print("[warn] runs are NOT the same experiment; the page says so and "
+                  "shows the gbm_uniform run only", file=sys.stderr)
     return 0
 
 

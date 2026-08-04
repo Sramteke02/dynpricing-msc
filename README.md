@@ -70,9 +70,19 @@ Two panels are currently empty by design: the oracle-verification KPI (run
 `dynpricing verify-oracle` and record its output under `results/`) and the RQ2
 LLM tile (needs `OPENAI_API_KEY`).
 
-The older `results/dashboard.png` is the static Matplotlib view from
-`dynpricing dashboard`; it predates the linear-demand model and does not include
-`gbm_uniform`.
+The page also carries a **run-provenance strip**: the config fingerprint,
+horizon, price band, inventory, seed range, and the result of a build-time check
+that the two committed runs it merges really are the same experiment (identical
+scenarios, identical seeds, and identical numbers on every shared episode row).
+If that check ever fails, the merge is refused and the page says so instead of
+mixing two experiments on one axis.
+
+The previous static Matplotlib figure has been moved to
+`results/archive/dashboard-2026-07-16-isoelastic-SUPERSEDED.png` — it predates
+the linear-demand model, the 365-day horizon, the reconciled band and
+`gbm_uniform`, so it must not be presented. See `results/archive/README.md`.
+Regenerating a *fresh* PNG from current results with `dynpricing dashboard`
+is still fine.
 
 ### Reproducibility & rigour notes
 
