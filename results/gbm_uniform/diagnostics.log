@@ -1,0 +1,62 @@
+
+==============================================================================
+1. TRAINING COVERAGE  (seed 0, 40 exploration episodes)
+==============================================================================
+legal band [0.840, 5.972]   true choke price (day 0) ~ 3.150
+
+ORIGINAL gbm exploration (random moves over {hold,+5%,-5%,-10%}):
+  training prices: [0.840, 2.553]
+
+NEW gbm_uniform exploration (uniform over the band):
+gbm_uniform training coverage (14600 rows, backend=sklearn_hgbr):
+  band           : [0.840, 5.972]
+  training prices: [0.841, 5.972]  (100.0% of the band)
+  spans full band: YES
+
+==============================================================================
+2. DOES THE OPTIMISER CLAMP EVER BIND?
+==============================================================================
+gbm_uniform clamp (train_max=5.972): bound on 0/365 decisions (0.00%); 0 candidate prices excluded
+
+Interpretation: with training data spanning the whole band, train_max == price_max,
+so no reachable price can exceed it — the clamp is inert. The coverage change,
+not the clamp, is doing the work (see the ablation in section 4).
+
+==============================================================================
+3. PRICE PATH ON THE FAILING SEED (0, baseline)
+==============================================================================
+
+gbm (original):
+  first 20 steps : [2.1, 1.89, 1.985, 2.084, 2.188, 2.188, 2.297, 2.412, 2.533, 2.659, 2.792, 2.932, 3.079, 3.233, 3.394, 3.564, 3.742, 3.929, 4.126, 4.332]
+  last 10 steps  : [5.972, 5.972, 5.972, 5.972, 5.972, 5.972, 5.972, 5.972, 5.972, 5.972]
+  min / max      : 1.890 / 5.972
+  steps at price_max (5.972) : 340/366
+  steps above the choke (3.150)   : 353/366
+  gross profit   : 555.1
+
+gbm_uniform:
+  first 20 steps : [2.1, 1.995, 1.995, 1.995, 1.995, 1.995, 2.095, 2.199, 1.98, 1.98, 1.98, 1.98, 1.98, 2.079, 2.182, 1.964, 1.964, 1.964, 1.866, 1.959]
+  last 10 steps  : [2.047, 2.047, 2.047, 2.047, 2.047, 2.047, 2.047, 2.047, 2.047, 2.047]
+  min / max      : 1.511 / 2.424
+  steps at price_max (5.972) : 0/366
+  steps above the choke (3.150)   : 0/366
+  gross profit   : 18,633.2
+
+==============================================================================
+4. ABLATION (2x2) — which change recovers performance? (baseline, 30 seeds)
+==============================================================================
+
+faithfulness check — (drift, no clamp) vs the original gbm agent: max per-seed |Δ| = 0.0000  (IDENTICAL)
+
+variant                              profit  % oracle  clamp binds    paired Δ vs original                    95% CI
+drift-only (ORIGINAL gbm)           1,965.9     10.3%            —                       —                         —
+drift + clamp                      15,473.8     81.5%       91.70%               +13,508.0    [+11,909.9, +14,821.2]
+uniform-only                       18,809.3     99.0%            —               +16,843.4    [+15,668.3, +17,693.9]
+uniform + clamp (gbm_uniform)      18,809.3     99.0%        0.00%               +16,843.4    [+15,668.3, +17,693.9]
+oracle (ceiling)                   18,997.1    100.0%
+
+The decisive contrast — uniform-only vs the full agent (same fitted model, clamp is the ONLY difference):
+  paired Δ = +0.0000   95% CI = [+0.0000, +0.0000]   NOT distinguishable from zero
+  seeds with byte-identical profit: 30/30
+
+[ok] wrote per-seed profits -> results/gbm_uniform/ablation_per_seed.json

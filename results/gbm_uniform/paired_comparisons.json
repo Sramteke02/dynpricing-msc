@@ -1,0 +1,58 @@
+[
+  {
+    "agent_a": "gbm",
+    "agent_b": "oracle",
+    "scenario": "baseline",
+    "metric": "gross_profit",
+    "n_pairs": 30,
+    "mean_a": 1965.8689062243438,
+    "mean_b": 18997.091078702393,
+    "mean_diff": -17031.222172478047,
+    "ci_low": -17880.51785074427,
+    "ci_high": -15852.40743883265,
+    "significant": true,
+    "winner": "oracle"
+  },
+  {
+    "agent_a": "gbm",
+    "agent_b": "oracle",
+    "scenario": "high_competition",
+    "metric": "gross_profit",
+    "n_pairs": 30,
+    "mean_a": 2090.7087381368488,
+    "mean_b": 25130.208556849277,
+    "mean_diff": -23039.49981871243,
+    "ci_low": -23755.215743678906,
+    "ci_high": -21919.8127377199,
+    "significant": true,
+    "winner": "oracle"
+  },
+  {
+    "agent_a": "gbm",
+    "agent_b": "oracle",
+    "scenario": "scarce_inventory",
+    "metric": "gross_profit",
+    "n_pairs": 30,
+    "mean_a": 723.2692517802112,
+    "mean_b": 18600.69676145427,
+    "mean_diff": -17877.42750967406,
+    "ci_low": -18311.139787998378,
+    "ci_high": -17055.944778624405,
+    "significant": true,
+    "winner": "oracle"
+  },
+  {
+    "agent_a": "gbm",
+    "agent_b": "oracle",
+    "scenario": "strong_seasonality",
+    "metric": "gross_profit",
+    "n_pairs": 30,
+    "mean_a": 2459.1098670887527,
+    "mean_b": 21528.371582414806,
+    "mean_diff": -19069.261715326058,
+    "ci_low": -20157.454283891675,
+    "ci_high": -17591.55515003865,
+    "significant": true,
+    "winner": "oracle"
+  }
+]
