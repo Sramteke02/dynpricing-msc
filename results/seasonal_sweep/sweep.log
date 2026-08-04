@@ -1,0 +1,128 @@
+Seasonal-amplitude sweep | config=configs/calibrated.json | 4 agents x 5 amplitudes x 30 seeds
+base seasonal_amplitude=0.25, weekend_uplift=0.15, band=[0.840, 5.972]
+
+How much room does a dynamic pricer have? closed-form p*(t), competitors held at ref_price:
+   amplitude    min p*    max p*    range     std
+        0.00     1.995     2.184    0.189   0.085
+        0.10     1.869     2.329    0.460   0.126
+        0.25     1.680     2.546    0.866   0.248
+        0.40     1.491     2.763    1.272   0.382
+        0.60     1.239     3.053    1.814   0.565
+
+verifying oracle cache ...
+  A=0.0 seed=0: |Δ| = 0.000000  OK
+  A=0.0 seed=1: |Δ| = 0.000000  OK
+  A=0.00 | fixed        done
+  A=0.00 | gbm          done
+  A=0.00 | gbm_uniform  done
+  A=0.00 | oracle       done
+  A=0.10 | fixed        done
+  A=0.10 | gbm          done
+  A=0.10 | gbm_uniform  done
+  A=0.10 | oracle       done
+  A=0.25 | fixed        done
+  A=0.25 | gbm          done
+  A=0.25 | gbm_uniform  done
+  A=0.25 | oracle       done
+  A=0.40 | fixed        done
+  A=0.40 | gbm          done
+  A=0.40 | gbm_uniform  done
+  A=0.40 | oracle       done
+  A=0.60 | fixed        done
+  A=0.60 | gbm          done
+  A=0.60 | gbm_uniform  done
+  A=0.60 | oracle       done
+
+oracle cache: 6 entries on entry, 150 on exit, 6 episode(s) served from cache this run
+
+[A=0.00]  (n=30 seeds)
+  fixed         profit=   18214.4  [  18165.6,   18259.1]  ( 99.46% of oracle)
+  gbm           profit=    7008.3  [   4302.3,    9846.9]  ( 38.27% of oracle)
+  gbm_uniform   profit=   18182.0  [  18118.4,   18239.5]  ( 99.28% of oracle)
+  oracle        profit=   18313.9  [  18265.6,   18358.3]  (100.00% of oracle)
+
+[A=0.10]  (n=30 seeds)
+  fixed         profit=   18217.4  [  18166.6,   18263.4]  ( 98.90% of oracle)
+  gbm           profit=    5187.9  [   2716.5,    7920.0]  ( 28.16% of oracle)
+  gbm_uniform   profit=   18279.8  [  18227.3,   18328.6]  ( 99.24% of oracle)
+  oracle        profit=   18419.8  [  18369.6,   18465.0]  (100.00% of oracle)
+
+[A=0.25]  (n=30 seeds)
+  fixed         profit=   18221.9  [  18167.7,   18271.7]  ( 95.92% of oracle)
+  gbm           profit=    1965.9  [   1117.9,    3137.0]  ( 10.35% of oracle)
+  gbm_uniform   profit=   18809.3  [  18750.9,   18865.7]  ( 99.01% of oracle)
+  oracle        profit=   18997.1  [  18942.7,   19046.9]  (100.00% of oracle)
+
+[A=0.40]  (n=30 seeds)
+  fixed         profit=   18226.9  [  18169.1,   18280.5]  ( 90.89% of oracle)
+  gbm           profit=    1174.6  [    934.8,    1433.8]  (  5.86% of oracle)
+  gbm_uniform   profit=   19841.4  [  19777.7,   19900.8]  ( 98.94% of oracle)
+  oracle        profit=   20054.9  [  19994.7,   20110.0]  (100.00% of oracle)
+
+[A=0.60]  (n=30 seeds)
+  fixed         profit=   19293.8  [  19233.7,   19351.6]  ( 86.83% of oracle)
+  gbm           profit=    1064.1  [    882.3,    1248.5]  (  4.79% of oracle)
+  gbm_uniform   profit=   21935.5  [  21861.6,   22006.6]  ( 98.71% of oracle)
+  oracle        profit=   22221.2  [  22150.1,   22287.7]  (100.00% of oracle)
+
+==============================================================================
+CURVE — % of oracle vs seasonal amplitude
+==============================================================================
+
+ amplitude     fixed       gbm   gbm_uniform   oracle
+      0.00    99.46%    38.27%        99.28%   100.0%
+      0.10    98.90%    28.16%        99.24%   100.0%
+      0.25    95.92%    10.35%        99.01%   100.0%
+      0.40    90.89%     5.86%        98.94%   100.0%
+      0.60    86.83%     4.79%        98.71%   100.0%
+
+(bars scaled to [85.8%, 100%])
+
+  A=0.00
+    fixed        99.46% |############################################
+    gbm_uniform  99.28% |############################################
+    oracle      100.00% |##############################################
+
+  A=0.10
+    fixed        98.90% |##########################################
+    gbm_uniform  99.24% |############################################
+    oracle      100.00% |##############################################
+
+  A=0.25
+    fixed        95.92% |#################################
+    gbm_uniform  99.01% |###########################################
+    oracle      100.00% |##############################################
+
+  A=0.40
+    fixed        90.89% |################
+    gbm_uniform  98.94% |###########################################
+    oracle      100.00% |##############################################
+
+  A=0.60
+    fixed        86.83% |###
+    gbm_uniform  98.71% |##########################################
+    oracle      100.00% |##############################################
+
+==============================================================================
+ANSWERS
+==============================================================================
+
+1. gbm_uniform across amplitudes: min=98.71% max=99.28%  (spread 0.57 pts)
+   within the 95-99% band at every amplitude: YES
+   change from A=0.00 to A=0.60: -0.57 pts
+
+2. where does dynamic pricing earn the most (fixed furthest below gbm_uniform)?
+   A=0.00: gbm_uniform - fixed =  -0.18 pts of oracle | paired Δ=    -32.4 CI=[-59.2, -8.9] significant
+   A=0.10: gbm_uniform - fixed =  +0.34 pts of oracle | paired Δ=    +62.3 CI=[+50.4, +74.4] significant
+   A=0.25: gbm_uniform - fixed =  +3.09 pts of oracle | paired Δ=   +587.4 CI=[+563.5, +608.4] significant
+   A=0.40: gbm_uniform - fixed =  +8.05 pts of oracle | paired Δ=  +1614.4 CI=[+1585.4, +1641.7] significant
+   A=0.60: gbm_uniform - fixed = +11.89 pts of oracle | paired Δ=  +2641.7 CI=[+2607.7, +2672.6] significant
+   -> largest at A=0.60 (+11.89 pts, +2,641.7 profit)
+
+3. control at A=0.00 (no seasonality -> p* barely moves):
+   p*(t) range at A=0: [1.995, 2.184] (std 0.085) — residual movement is the weekend factor, not seasonality
+   fixed       = 99.46% of oracle
+   gbm_uniform = 99.28% of oracle
+   gbm_uniform - fixed: paired Δ=-32.4 CI=[-59.2, -8.9] significant
+
+[ok] wrote results/seasonal_sweep/metrics.csv, metrics_aggregated.json, summary.json
