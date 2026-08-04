@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynamic Pricing — Results Dashboard</title>
+<style>
+
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --plane: #f9f9f7;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --good: #006300;
+  --warning: #fab219;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --plane: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --good: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #1a1a19;
+  --plane: #0d0d0d;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --good: #0ca30c;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 1.25rem 4rem;
+  background: var(--plane); color: var(--text-primary);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.wrap { max-width: 1080px; margin: 0 auto; }
+header { padding: 2.25rem 0 1.25rem; display: flex; gap: 1rem;
+  align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+h1 { font-size: 1.5rem; margin: 0 0 .3rem; letter-spacing: -0.01em; }
+.subtitle { color: var(--text-secondary); font-size: .875rem; margin: 0; max-width: 62ch; }
+h2 { font-size: 1.0625rem; margin: 0; letter-spacing: -0.005em; }
+.section {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1.15rem 1.25rem 1.35rem; margin-bottom: 1.15rem;
+}
+.section-head { display: flex; gap: .75rem; align-items: baseline;
+  justify-content: space-between; flex-wrap: wrap; margin-bottom: .2rem; }
+.section-note { color: var(--text-secondary); font-size: .8125rem; margin: .3rem 0 1rem; max-width: 78ch; }
+.controls { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+label.ctl { color: var(--text-secondary); font-size: .8125rem; }
+select, button {
+  font: inherit; font-size: .8125rem; color: var(--text-primary);
+  background: var(--surface-1); border: 1px solid var(--axis);
+  border-radius: 6px; padding: .3rem .55rem; cursor: pointer;
+}
+select:focus-visible, button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+.kpis { display: grid; gap: 1.15rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.kpi { background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1.1rem 1.15rem; }
+.kpi .label { color: var(--text-secondary); font-size: .8125rem; margin-bottom: .45rem; }
+.kpi .value { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.kpi.hero .value { font-size: 3rem; }
+.kpi .delta { color: var(--good); font-size: .875rem; font-weight: 600; margin-top: .2rem; }
+.kpi .sub { color: var(--text-secondary); font-size: .78125rem; margin-top: .45rem; }
+.kpi .empty { color: var(--text-secondary); font-size: .8125rem; margin-top: .3rem; }
+.badge { display: inline-block; font-size: .6875rem; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; padding: .15rem .45rem;
+  border-radius: 4px; border: 1px solid var(--axis); color: var(--text-secondary); }
+.chart { position: relative; width: 100%; }
+svg { width: 100%; height: auto; display: block; overflow: visible; }
+.legend { display: flex; gap: 1rem; flex-wrap: wrap; margin: .1rem 0 .6rem; }
+.legend span { display: inline-flex; align-items: center; gap: .4rem;
+  color: var(--text-secondary); font-size: .8125rem; }
+.legend i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+.legend i.rect { height: 10px; width: 10px; border-radius: 2px; }
+.tooltip {
+  position: absolute; pointer-events: none; z-index: 5; opacity: 0;
+  transition: opacity .1s; background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 8px; padding: .5rem .6rem;
+  box-shadow: 0 6px 20px rgba(0,0,0,.13); font-size: .8125rem; min-width: 130px;
+}
+.tooltip .tt-title { color: var(--text-secondary); font-size: .75rem; margin-bottom: .3rem; }
+.tooltip .tt-row { display: flex; align-items: center; gap: .45rem; margin-top: .16rem; }
+.tooltip .tt-key { display: inline-block; width: 12px; height: 2px; border-radius: 1px; flex: none; }
+.tooltip .tt-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tooltip .tt-name { color: var(--text-secondary); }
+table { border-collapse: collapse; width: 100%; font-size: .8125rem; margin-top: .5rem; }
+th, td { text-align: right; padding: .35rem .5rem; border-bottom: 1px solid var(--grid);
+  font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; }
+th { color: var(--text-secondary); font-weight: 600; }
+.tablewrap { overflow-x: auto; }
+.tablewrap[hidden] { display: none; }
+.empty-panel { border: 1px dashed var(--axis); border-radius: 8px; padding: 1.5rem;
+  color: var(--text-secondary); font-size: .875rem; text-align: center; }
+footer { color: var(--text-secondary); font-size: .78125rem; padding-top: .5rem; }
+footer code { font-size: .95em; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div>
+    <h1>Dynamic Pricing — Results Dashboard</h1>
+    <p class="subtitle">Every number is read from the committed results files; nothing is
+    hardcoded. Panels with no underlying run show an explicit empty state.</p>
+  </div>
+  <div class="controls">
+    <button id="theme-toggle" type="button" aria-label="Toggle colour theme">Theme</button>
+  </div>
+</header>
+
+<section class="kpis" id="kpis" aria-label="Key results"></section>
+
+<section class="section" aria-labelledby="ladder-h">
+  <div class="section-head">
+    <h2 id="ladder-h">Agent ladder — % of oracle</h2>
+    <div class="controls">
+      <label class="ctl" for="scenario">Scenario</label>
+      <select id="scenario"></select>
+      <button type="button" data-table="ladder">Show table</button>
+    </div>
+  </div>
+  <p class="section-note" id="ladder-note"></p>
+  <div class="chart" id="ladder-chart"></div>
+  <div class="tablewrap" id="ladder-table" hidden></div>
+</section>
+
+<section class="section" aria-labelledby="amp-h">
+  <div class="section-head">
+    <h2 id="amp-h">RQ1 — profit vs seasonal amplitude</h2>
+    <div class="controls"><button type="button" data-table="amp">Show table</button></div>
+  </div>
+  <p class="section-note" id="amp-note"></p>
+  <div class="legend" id="amp-legend"></div>
+  <div class="chart" id="amp-chart"></div>
+  <div class="tablewrap" id="amp-table" hidden></div>
+</section>
+
+<section class="section" aria-labelledby="paths-h">
+  <div class="section-head">
+    <h2 id="paths-h">GBM diagnosis — price path, baseline seed 0</h2>
+    <div class="controls"><button type="button" data-table="paths">Show table</button></div>
+  </div>
+  <p class="section-note" id="paths-note"></p>
+  <div class="legend" id="paths-legend"></div>
+  <div class="chart" id="paths-chart"></div>
+  <div class="tablewrap" id="paths-table" hidden></div>
+</section>
+
+<footer id="footer"></footer>
+</div>
+
+<script type="application/json" id="data">{"kpis":[{"id":"oracle-verification","label":"Oracle verification gap","value":null,"sub":null,"empty":"not yet run \u2014 no committed results file records a verify-oracle gap. Produce one with: dynpricing verify-oracle --config configs/calibrated.json"},{"id":"recovery","label":"gbm \u2192 gbm_uniform recovery (baseline)","value":"99.0%","delta":"+88.7 pts of oracle","sub":"was 10.3% of oracle \u00b7 now 99.0% \u00b7 paired \u0394 +16,843 [+15,668, +17,694]","hero":true,"empty":null},{"id":"rq2","label":"RQ2 \u2014 LLM vs GBM","value":null,"pending":true,"empty":"pending \u2014 the LLM agent has not been run. No llm rows exist in any committed results file (needs OPENAI_API_KEY)."}],"ladder":{"baseline":[{"agent":"fixed","mean":18221.915041684228,"ci_low":18167.723668198585,"ci_high":18271.68857022133,"share":0.331942776707292,"stability":0.0,"n_seeds":30,"pct":95.9195013920462},{"agent":"cost_plus","mean":12660.765150906378,"ci_low":12628.79351314878,"ci_high":12690.245539287267,"share":0.4632547969425393,"stability":0.01892759317840268,"n_seeds":30,"pct":66.64580960555767},{"agent":"competitor_match","mean":18171.651314443432,"ci_low":18111.39867191528,"ci_high":18228.916670687213,"share":0.33200966452795727,"stability":0.050397002817095214,"n_seeds":30,"pct":95.65491495071916},{"agent":"random","mean":1854.7289383817306,"ci_low":1671.4326822016287,"ci_high":2048.7393373201385,"share":0.5197280719189015,"stability":0.04200743887494506,"n_seeds":30,"pct":9.76322601548752},{"agent":"gbm","mean":1965.8689062243438,"ci_low":1117.8557073094116,"ci_high":3136.954593722622,"share":0.030711507205034953,"stability":0.04633669765740442,"n_seeds":30,"pct":10.348262784444278},{"agent":"gbm_uniform","mean":18809.265882165728,"ci_low":18750.889540759934,"ci_high":18865.71765739569,"share":0.36585030817990893,"stability":0.0663543901548503,"n_seeds":30,"pct":99.011294962168},{"agent":"oracle","mean":18997.091078702393,"ci_low":18942.739694713455,"ci_high":19046.86031141294,"share":0.3643491322836558,"stability":0.09150486222101924,"n_seeds":30,"pct":100.0}],"high_competition":[{"agent":"fixed","mean":24151.14927244709,"ci_low":24060.30219143219,"ci_high":24234.328528548875,"share":0.33169366954238994,"stability":0.0,"n_seeds":30,"pct":96.10405428117572},{"agent":"cost_plus","mean":15204.141357381724,"ci_low":15157.914318571853,"ci_high":15245.915573028371,"share":0.4291895615232084,"stability":0.01892759317840268,"n_seeds":30,"pct":60.5014531534312},{"agent":"competitor_match","mean":24045.885565456054,"ci_low":23920.354654419018,"ci_high":24157.70945216378,"share":0.33241282138830625,"stability":0.06216812557174425,"n_seeds":30,"pct":95.68518108817013},{"agent":"random","mean":2222.797099768885,"ci_low":2002.3071514164496,"ci_high":2454.034972117596,"share":0.47665280563021895,"stability":0.04200743887494506,"n_seeds":30,"pct":8.845119986730307},{"agent":"gbm","mean":2090.7087381368488,"ci_low":1382.0307316690398,"ci_high":3199.2437459468492,"share":0.02447431729963099,"stability":0.04539802032871198,"n_seeds":30,"pct":8.319504127501652},{"agent":"gbm_uniform","mean":24289.808566150274,"ci_low":24166.93384474504,"ci_high":24400.825045233196,"share":0.354235055683999,"stability":0.06930047421387364,"n_seeds":30,"pct":96.65581768333574},{"agent":"oracle","mean":25130.208556849277,"ci_low":25032.060824503773,"ci_high":25218.130520509578,"share":0.3221775056824278,"stability":0.09727451457475249,"n_seeds":30,"pct":100.0}],"scarce_inventory":[{"agent":"fixed","mean":18109.89338198223,"ci_low":18082.845716036325,"ci_high":18131.432028253912,"share":0.33161879981701475,"stability":0.0,"n_seeds":30,"pct":97.36137099719234},{"agent":"cost_plus","mean":7789.710063671253,"ci_low":7788.628497334429,"ci_high":7790.832908947742,"share":0.4206247051560863,"stability":0.026497293070594563,"n_seeds":30,"pct":41.87859284827256},{"agent":"competitor_match","mean":18004.21897892585,"ci_low":17921.41338641459,"ci_high":18078.224107802376,"share":0.33169567153449986,"stability":0.05034872635015109,"n_seeds":30,"pct":96.79325032724319},{"agent":"random","mean":1420.5957775863435,"ci_low":1243.7710861136186,"ci_high":1622.7781335220466,"share":0.4534673866959015,"stability":0.05080398851346972,"n_seeds":30,"pct":7.637325610996499},{"agent":"gbm","mean":723.2692517802112,"ci_low":305.90036348549165,"ci_high":1526.4709408961705,"share":0.01158897328612443,"stability":0.0446493555827867,"n_seeds":30,"pct":3.888398703854056},{"agent":"gbm_uniform","mean":17676.150784736088,"ci_low":17537.042084462715,"ci_high":17806.927878194107,"share":0.3652021951322229,"stability":0.06579215545184597,"n_seeds":30,"pct":95.0295089018703},{"agent":"oracle","mean":18600.69676145427,"ci_low":18552.809786881713,"ci_high":18645.110650883085,"share":0.34531235158758306,"stability":0.1030413194271737,"n_seeds":30,"pct":100.0}],"strong_seasonality":[{"agent":"fixed","mean":18881.36731695235,"ci_low":18820.565356509287,"ci_high":18938.1790929504,"share":0.287620596598429,"stability":0.0,"n_seeds":30,"pct":87.70457739764846},{"agent":"cost_plus","mean":12812.942788395116,"ci_low":12776.757851692446,"ci_high":12846.638207986907,"share":0.5616037437740455,"stability":0.01892759317840268,"n_seeds":30,"pct":59.51654420003237},{"agent":"competitor_match","mean":18830.581172493174,"ci_low":18745.831644954764,"ci_high":18911.034819536126,"share":0.28468100075074765,"stability":0.049823015725099104,"n_seeds":30,"pct":87.46867407228659},{"agent":"random","mean":1941.6327854566741,"ci_low":1727.0594909452554,"ci_high":2182.3247070195375,"share":0.6039919982179014,"stability":0.04200743887494506,"n_seeds":30,"pct":9.018948683711283},{"agent":"gbm","mean":2459.1098670887527,"ci_low":1377.3350901118786,"ci_high":3937.9914186629317,"share":0.030975907940270435,"stability":0.04628033349069611,"n_seeds":30,"pct":11.422646890289869},{"agent":"gbm_uniform","mean":20489.871935500043,"ci_low":20371.400289727848,"ci_high":20598.897484403173,"share":0.4750537153738347,"stability":0.06596195606082055,"n_seeds":30,"pct":95.17613469769795},{"agent":"oracle","mean":21528.371582414806,"ci_low":21460.683861875394,"ci_high":21591.68017991546,"share":0.48177153938753514,"stability":0.09579166984102519,"n_seeds":30,"pct":100.0}]},"ladderNotes":["Agents are merged from two committed runs; every shared episode row agrees exactly (max |\u0394| = 0.000000)."],"scenarios":["baseline","high_competition","scarce_inventory","strong_seasonality"],"amplitude":{"amplitudes":[0.0,0.1,0.25,0.4,0.6],"n_seeds":30,"series":{"fixed":[99.45711068685347,98.90144878951084,95.9195013920462,90.88508816689156,86.82617029957153],"gbm":[38.26773084625176,28.164707589401687,10.348262784444278,5.8570211819861555,4.788788279809154],"gbm_uniform":[99.28031954911866,99.2398859203627,99.011294962168,98.93512804234605,98.71453510328064],"oracle":[100.0,100.0,100.0,100.0,99.99999999999999]},"profit":{"fixed":[18214.426896852263,18217.42215478505,18221.915041684228,18226.934511684532,19293.803558399974],"gbm":[7008.295145453143,5187.875145430887,1965.8689062243438,1174.6210920935284,1064.125482381916],"gbm_uniform":[18182.04963159648,18279.76150533091,18809.265882165728,19841.363815608664,21935.539043933553],"oracle":[18313.850835865775,18419.772791758263,18997.091078702393,20054.923067483367,22221.18457123196]},"gap":[{"pts_of_oracle":-0.17679113773480992,"agent_a":"gbm_uniform","agent_b":"fixed","scenario":"A=0.00","metric":"gross_profit","n_pairs":30,"mean_a":18182.04963159648,"mean_b":18214.426896852263,"mean_diff":-32.37726525578194,"ci_low":-59.203339536535914,"ci_high":-8.88789709048685,"significant":true,"winner":"fixed"},{"pts_of_oracle":0.3384371308518581,"agent_a":"gbm_uniform","agent_b":"fixed","scenario":"A=0.10","metric":"gross_profit","n_pairs":30,"mean_a":18279.76150533091,"mean_b":18217.42215478505,"mean_diff":62.33935054585757,"ci_low":50.43833392234824,"ci_high":74.36107287507957,"significant":true,"winner":"gbm_uniform"},{"pts_of_oracle":3.0917935701217942,"agent_a":"gbm_uniform","agent_b":"fixed","scenario":"A=0.25","metric":"gross_profit","n_pairs":30,"mean_a":18809.265882165728,"mean_b":18221.915041684228,"mean_diff":587.3508404814944,"ci_low":563.5273836312082,"ci_high":608.4390039062991,"significant":true,"winner":"gbm_uniform"},{"pts_of_oracle":8.050039875454488,"agent_a":"gbm_uniform","agent_b":"fixed","scenario":"A=0.40","metric":"gross_profit","n_pairs":30,"mean_a":19841.363815608664,"mean_b":18226.934511684532,"mean_diff":1614.429303924131,"ci_low":1585.3946336439299,"ci_high":1641.688818028452,"significant":true,"winner":"gbm_uniform"},{"pts_of_oracle":11.88836480370911,"agent_a":"gbm_uniform","agent_b":"fixed","scenario":"A=0.60","metric":"gross_profit","n_pairs":30,"mean_a":21935.539043933553,"mean_b":19293.803558399974,"mean_diff":2641.7354855335793,"ci_low":2607.6954231503314,"ci_high":2672.6319191954994,"significant":true,"winner":"gbm_uniform"}],"dispersion":[{"min":1.9949999999999999,"max":2.184,"std":0.08531116310643269},{"min":1.86900116679324,"max":2.3288664559368866,"std":0.12627889739795498},{"min":1.6800029169831001,"max":2.5461661398422155,"std":0.2479098166298203},{"min":1.4910046671729602,"max":2.7634658237475445,"std":0.3820793601589032},{"min":1.2390070007594403,"max":3.053198735621317,"std":0.5651293129124076}]},"paths":{"gbm":[2.1,1.89,1.9845,2.0837,2.1879,2.1879,2.2973,2.4122,2.5328,2.6594,2.7924,2.932,3.0786,3.2325,3.3942,3.5639,3.7421,3.9292,4.1256,4.3319,4.5485,4.7759,5.0147,5.2655,5.5287,5.8052,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972,5.972],"gbm_uniform":[2.1,1.995,1.995,1.995,1.995,1.995,2.0947,2.1995,1.9795,1.9795,1.9795,1.9795,1.9795,2.0785,2.1824,1.9642,1.9642,1.9642,1.866,1.9593,2.0573,2.1601,1.9441,1.9441,2.0413,2.0413,2.0413,2.1434,2.2505,2.0255,2.0255,2.0255,2.0255,2.0255,2.1268,2.2331,2.0098,2.0098,2.0098,2.0098,2.0098,2.1103,2.2158,2.2158,2.2158,1.9942,1.9942,1.9942,2.0939,2.1986,2.1986,2.1986,2.1986,2.1986,2.1986,2.1986,2.1986,2.1986,2.3086,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.424,2.3028,2.3028,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.4179,2.297,2.4119,2.4119,2.4119,2.4119,2.4119,2.4119,2.4119,2.4119,2.1707,2.1707,2.1707,2.1707,2.1707,2.2792,2.3932,2.1539,2.1539,2.1539,2.1539,2.1539,2.2616,2.2616,2.1485,2.1485,2.1485,2.0411,2.0411,2.1431,2.2503,2.0252,2.0252,1.924,1.924,1.924,2.0202,2.1212,2.0151,2.0151,2.0151,2.0151,2.0151,2.0151,2.1159,2.0101,2.0101,2.0101,2.0101,2.0101,2.1106,2.2161,1.9945,1.9945,1.9945,1.9945,1.9945,1.9945,2.0942,1.9895,1.9895,1.9895,1.9895,1.9895,2.089,2.089,1.9845,1.9845,1.9845,1.9845,1.9845,1.9845,2.0838,1.9796,1.9796,1.9796,1.9796,1.9796,1.9796,1.9796,1.9796,1.7816,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.6925,1.7772,1.7772,1.5995,1.6794,1.5115,1.5115,1.5871,1.6664,1.7497,1.6622,1.7454,1.7454,1.7454,1.7454,1.8326,1.741,1.5669,1.5669,1.5669,1.5669,1.6452,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.7275,1.6411,1.7232,1.637,1.7189,1.8048,1.6243,1.6243,1.6243,1.6243,1.6243,1.7056,1.7056,1.7056,1.7908,1.7908,1.7908,1.7908,1.8804,1.9744,1.9744,1.9744,1.9744,1.9744,1.9744,2.0731,2.0731,1.9695,1.9695,1.9695,1.9695,1.9695,2.0679,2.0679,1.9645,1.9645,1.9645,1.9645,1.9645,2.0628,2.1659,2.1659,1.9493,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468,2.0468],"band":[0.84,5.972],"choke":3.15,"stats":{"gbm":{"min":1.89,"max":5.972,"n":366,"at_max":340,"above_choke":353},"gbm_uniform":{"min":1.5115,"max":2.424,"n":366,"at_max":0,"above_choke":0}}},"footer":"Generated by scripts/build_dashboard_html.py from the committed results files. Regenerate after a new run: python scripts/build_dashboard_html.py"}</script>
+<script>
+
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const SVGNS = 'http://www.w3.org/2000/svg';
+const fmt = (v, d = 1) => v == null ? '—' : v.toLocaleString(undefined,
+  { minimumFractionDigits: d, maximumFractionDigits: d });
+const el = (tag, attrs = {}, text) => {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+};
+const html = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+/* ---------- theme ---------- */
+const toggle = document.getElementById('theme-toggle');
+toggle.addEventListener('click', () => {
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const cur = document.documentElement.getAttribute('data-theme') || (dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+  renderAll();
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
+
+/* ---------- tooltip ---------- */
+function makeTooltip(host) {
+  const tip = html('div', 'tooltip');
+  host.appendChild(tip);
+  return {
+    show(x, y, title, rows) {
+      tip.replaceChildren();
+      tip.appendChild(html('div', 'tt-title', title));
+      for (const r of rows) {
+        const row = html('div', 'tt-row');
+        const key = html('span', 'tt-key');
+        key.style.background = r.color;
+        row.appendChild(key);
+        row.appendChild(html('span', 'tt-val', r.value));
+        row.appendChild(html('span', 'tt-name', r.name));
+        tip.appendChild(row);
+      }
+      tip.style.opacity = '1';
+      const hw = host.clientWidth, tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(x + 12, hw - tw - 4)) + 'px';
+      tip.style.top = Math.max(0, y - tip.offsetHeight - 10) + 'px';
+    },
+    hide() { tip.style.opacity = '0'; },
+  };
+}
+
+/* ---------- KPI strip ---------- */
+function renderKpis() {
+  const host = document.getElementById('kpis');
+  host.replaceChildren();
+  for (const k of DATA.kpis) {
+    const card = html('div', 'kpi' + (k.hero ? ' hero' : ''));
+    card.appendChild(html('div', 'label', k.label));
+    if (k.value != null) {
+      card.appendChild(html('div', 'value', k.value));
+      if (k.delta) card.appendChild(html('div', 'delta', k.delta));
+      if (k.sub) card.appendChild(html('div', 'sub', k.sub));
+    } else {
+      card.appendChild(html('span', 'badge', k.pending ? 'pending' : 'not yet run'));
+      card.appendChild(html('div', 'empty', k.empty || ''));
+    }
+    host.appendChild(card);
+  }
+}
+
+/* ---------- 2. agent ladder ---------- */
+const sel = document.getElementById('scenario');
+function renderLadder() {
+  const host = document.getElementById('ladder-chart');
+  host.replaceChildren();
+  const rows = (DATA.ladder[sel.value] || []).filter(r => r.pct != null);
+  const note = document.getElementById('ladder-note');
+  if (!rows.length) {
+    host.appendChild(html('div', 'empty-panel', 'not yet run — no rows for this scenario.'));
+    return;
+  }
+  const n = rows[0].n_seeds;
+  note.textContent = `Mean gross profit as a share of the oracle ceiling, `
+    + `${n} paired seeds. Bar values are direct-labelled; hover for the profit and its `
+    + `bootstrap 95% CI. ${DATA.ladderNotes.join(' · ')}`;
+
+  const W = 800, rowH = 34, padL = 128, padR = 62, padT = 12;
+  const H = padT + rows.length * rowH + 34;
+  const xmax = 105;
+  const x = v => padL + (v / xmax) * (W - padL - padR);
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+    'aria-label': 'Agent ladder, percent of oracle' });
+
+  for (const t of [0, 25, 50, 75, 100]) {
+    svg.appendChild(el('line', { x1: x(t), x2: x(t), y1: padT, y2: padT + rows.length * rowH,
+      stroke: cssVar('--grid'), 'stroke-width': 1 }));
+    svg.appendChild(el('text', { x: x(t), y: padT + rows.length * rowH + 18,
+      'text-anchor': 'middle', fill: cssVar('--muted'), 'font-size': 11 }, t + '%'));
+  }
+  // oracle ceiling: solid hairline at 100%
+  svg.appendChild(el('line', { x1: x(100), x2: x(100), y1: padT - 2,
+    y2: padT + rows.length * rowH, stroke: cssVar('--axis'), 'stroke-width': 1 }));
+  svg.appendChild(el('text', { x: x(100) + 4, y: padT + 8, fill: cssVar('--muted'),
+    'font-size': 10 }, 'oracle = 100%'));
+
+  const tip = makeTooltip(host);
+  const barH = Math.min(24, rowH - 12);
+  rows.forEach((r, i) => {
+    const y = padT + i * rowH + (rowH - barH) / 2;
+    const w = Math.max(2, x(r.pct) - x(0));
+    const rad = Math.min(4, w);
+    // square at the baseline, 4px rounded data-end
+    const d = `M${x(0)},${y} H${x(0) + w - rad} a${rad},${rad} 0 0 1 ${rad},${rad}`
+      + ` V${y + barH - rad} a${rad},${rad} 0 0 1 ${-rad},${rad} H${x(0)} Z`;
+    const bar = el('path', { d, fill: cssVar('--series-1') });
+    svg.appendChild(bar);
+    svg.appendChild(el('text', { x: padL - 10, y: y + barH / 2 + 4, 'text-anchor': 'end',
+      fill: cssVar('--text-secondary'), 'font-size': 12 }, r.agent));
+    svg.appendChild(el('text', { x: x(r.pct) + 7, y: y + barH / 2 + 4,
+      fill: cssVar('--text-primary'), 'font-size': 12 }, r.pct.toFixed(1) + '%'));
+    // hit target spans the whole row (bigger than the mark)
+    const hit = el('rect', { x: padL, y: padT + i * rowH, width: W - padL - padR,
+      height: rowH, fill: 'transparent', tabindex: 0, role: 'img',
+      'aria-label': `${r.agent}: ${r.pct.toFixed(1)}% of oracle, `
+        + `profit ${Math.round(r.mean)}` });
+    const show = (ev) => {
+      const bb = host.getBoundingClientRect();
+      const px = ev.clientX != null ? ev.clientX - bb.left : x(r.pct) * bb.width / W;
+      const py = ev.clientY != null ? ev.clientY - bb.top : (padT + i * rowH) * bb.width / W;
+      tip.show(px, py, r.agent, [
+        { color: cssVar('--series-1'), value: r.pct.toFixed(1) + '%', name: 'of oracle' },
+        { color: cssVar('--series-1'), value: fmt(r.mean, 0), name: 'gross profit' },
+        { color: cssVar('--axis'),
+          value: `[${fmt(r.ci_low, 0)}, ${fmt(r.ci_high, 0)}]`, name: '95% CI' },
+      ]);
+      bar.setAttribute('opacity', '0.82');
+    };
+    const hide = () => { tip.hide(); bar.setAttribute('opacity', '1'); };
+    hit.addEventListener('pointermove', show);
+    hit.addEventListener('pointerleave', hide);
+    hit.addEventListener('focus', show);
+    hit.addEventListener('blur', hide);
+    svg.appendChild(hit);
+  });
+  host.appendChild(svg);
+
+  const t = html('table');
+  const head = html('tr');
+  ['Agent', '% of oracle', 'Gross profit', 'CI low', 'CI high', 'Market share', 'Stability']
+    .forEach(h => head.appendChild(html('th', null, h)));
+  t.appendChild(head);
+  for (const r of rows) {
+    const tr = html('tr');
+    [r.agent, r.pct.toFixed(2) + '%', fmt(r.mean, 1), fmt(r.ci_low, 1), fmt(r.ci_high, 1),
+     r.share == null ? '—' : (100 * r.share).toFixed(1) + '%',
+     r.stability == null ? '—' : r.stability.toFixed(3)]
+      .forEach(v => tr.appendChild(html('td', null, v)));
+    t.appendChild(tr);
+  }
+  const wrap = document.getElementById('ladder-table');
+  wrap.replaceChildren(t);
+}
+
+/* ---------- shared line-chart renderer ---------- */
+function lineChart({ hostId, xs, series, colors, yMin, yMax, xLabel, yLabel,
+                     xTickFmt, yTickFmt, valFmt, endLabels, refLines = [], xIsIndex }) {
+  const host = document.getElementById(hostId);
+  host.replaceChildren();
+  const W = 800, H = 350, padL = 54, padR = endLabels ? 118 : 22, padT = 30, padB = 44;
+  const x = v => padL + ((v - xs[0]) / (xs[xs.length - 1] - xs[0])) * (W - padL - padR);
+  const y = v => padT + (1 - (v - yMin) / (yMax - yMin)) * (H - padT - padB);
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': yLabel });
+
+  const ticks = 5;
+  for (let i = 0; i <= ticks; i++) {
+    const v = yMin + (i / ticks) * (yMax - yMin);
+    svg.appendChild(el('line', { x1: padL, x2: W - padR, y1: y(v), y2: y(v),
+      stroke: cssVar('--grid'), 'stroke-width': 1 }));
+    svg.appendChild(el('text', { x: padL - 8, y: y(v) + 4, 'text-anchor': 'end',
+      fill: cssVar('--muted'), 'font-size': 11 }, yTickFmt(v)));
+  }
+  svg.appendChild(el('line', { x1: padL, x2: W - padR, y1: y(yMin), y2: y(yMin),
+    stroke: cssVar('--axis'), 'stroke-width': 1 }));
+
+  const xticks = xIsIndex ? [0, 0.25, 0.5, 0.75, 1].map(f =>
+    xs[Math.round(f * (xs.length - 1))]) : xs;
+  for (const t of xticks) {
+    svg.appendChild(el('text', { x: x(t), y: H - padB + 20, 'text-anchor': 'middle',
+      fill: cssVar('--muted'), 'font-size': 11 }, xTickFmt(t)));
+  }
+  svg.appendChild(el('text', { x: (padL + W - padR) / 2, y: H - 6, 'text-anchor': 'middle',
+    fill: cssVar('--text-secondary'), 'font-size': 11.5 }, xLabel));
+  svg.appendChild(el('text', { x: 4, y: 12, fill: cssVar('--text-secondary'),
+    'font-size': 11.5 }, yLabel));
+
+  for (const r of refLines) {
+    if (r.v == null || r.v < yMin || r.v > yMax) continue;
+    svg.appendChild(el('line', { x1: padL, x2: W - padR, y1: y(r.v), y2: y(r.v),
+      stroke: cssVar('--axis'), 'stroke-width': 1 }));
+    // right-anchored: the left edge is where the failing path climbs steeply
+    svg.appendChild(el('text', { x: W - padR - 4, y: y(r.v) - 5, 'text-anchor': 'end',
+      fill: cssVar('--muted'), 'font-size': 10.5 }, r.label));
+  }
+
+  const names = Object.keys(series);
+  names.forEach((name) => {
+    const pts = series[name];
+    const d = pts.map((v, i) => `${i ? 'L' : 'M'}${x(xs[i]).toFixed(2)},${y(v).toFixed(2)}`).join(' ');
+    svg.appendChild(el('path', { d, fill: 'none', stroke: colors[name], 'stroke-width': 2,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    if (endLabels) {
+      const lastX = x(xs[xs.length - 1]), lastY = y(pts[pts.length - 1]);
+      svg.appendChild(el('circle', { cx: lastX, cy: lastY, r: 4.5, fill: colors[name],
+        stroke: cssVar('--surface-1'), 'stroke-width': 2 }));
+      svg.appendChild(el('text', { x: lastX + 10, y: lastY + 4,
+        fill: cssVar('--text-primary'), 'font-size': 11.5 },
+        `${name} ${valFmt(pts[pts.length - 1])}`));
+    }
+  });
+
+  // crosshair + one tooltip listing every series at that X
+  const tip = makeTooltip(host);
+  const cross = el('line', { x1: 0, x2: 0, y1: padT, y2: y(yMin),
+    stroke: cssVar('--axis'), 'stroke-width': 1, opacity: 0 });
+  svg.appendChild(cross);
+  const dots = names.map(n => {
+    const c = el('circle', { r: 4.5, fill: colors[n], stroke: cssVar('--surface-1'),
+      'stroke-width': 2, opacity: 0 });
+    svg.appendChild(c);
+    return c;
+  });
+  const overlay = el('rect', { x: padL, y: padT, width: W - padL - padR,
+    height: H - padT - padB, fill: 'transparent', tabindex: 0 });
+  const move = (ev) => {
+    const bb = host.getBoundingClientRect();
+    const scale = W / bb.width;
+    const mx = (ev.clientX - bb.left) * scale;
+    let best = 0, bd = Infinity;
+    xs.forEach((v, i) => { const d = Math.abs(x(v) - mx); if (d < bd) { bd = d; best = i; } });
+    cross.setAttribute('x1', x(xs[best]));
+    cross.setAttribute('x2', x(xs[best]));
+    cross.setAttribute('opacity', 1);
+    names.forEach((n, k) => {
+      dots[k].setAttribute('cx', x(xs[best]));
+      dots[k].setAttribute('cy', y(series[n][best]));
+      dots[k].setAttribute('opacity', 1);
+    });
+    tip.show((x(xs[best])) / scale, (ev.clientY - bb.top),
+      xLabel.split('(')[0].trim() + ' ' + xTickFmt(xs[best]),
+      names.map(n => ({ color: colors[n], value: valFmt(series[n][best]), name })));
+  };
+  const leave = () => {
+    tip.hide(); cross.setAttribute('opacity', 0);
+    dots.forEach(d => d.setAttribute('opacity', 0));
+  };
+  overlay.addEventListener('pointermove', move);
+  overlay.addEventListener('pointerleave', leave);
+  svg.appendChild(overlay);
+  host.appendChild(svg);
+}
+
+function renderLegend(hostId, names, colors, kind) {
+  const host = document.getElementById(hostId);
+  host.replaceChildren();
+  for (const n of names) {
+    const s = html('span');
+    const i = html('i', kind === 'rect' ? 'rect' : null);
+    i.style.background = colors[n];
+    s.appendChild(i);
+    s.appendChild(document.createTextNode(n));
+    host.appendChild(s);
+  }
+}
+
+/* ---------- 3. amplitude curve ---------- */
+function renderAmplitude() {
+  const host = document.getElementById('amp-chart');
+  const note = document.getElementById('amp-note');
+  if (!DATA.amplitude) {
+    host.replaceChildren(html('div', 'empty-panel',
+      'not yet run — results/seasonal_sweep/summary.json is missing.'));
+    document.getElementById('amp-legend').replaceChildren();
+    return;
+  }
+  const A = DATA.amplitude;
+  const names = ['fixed', 'gbm_uniform', 'oracle'].filter(n => A.series[n]);
+  const colors = { fixed: cssVar('--series-2'), gbm_uniform: cssVar('--series-1'),
+    oracle: cssVar('--series-3') };
+  const vals = names.flatMap(n => A.series[n]);
+  // keep the top tick at exactly 100 so no tick reads above the ceiling
+  const lo = Math.floor(Math.min(...vals) - 1), hi = 100;
+  note.textContent = `Mean gross profit as a share of the oracle ceiling at each seasonal `
+    + `amplitude, ${A.n_seeds} seeds. The y-axis starts at ${lo}%, not 0. gbm is omitted `
+    + `from the plot (it ranges ${Math.min(...A.series.gbm).toFixed(1)}–`
+    + `${Math.max(...A.series.gbm).toFixed(1)}% and would flatten the others); it is in the table.`;
+  renderLegend('amp-legend', names, colors);
+  lineChart({
+    hostId: 'amp-chart', xs: A.amplitudes,
+    series: Object.fromEntries(names.map(n => [n, A.series[n]])),
+    colors, yMin: lo, yMax: hi,
+    xLabel: 'seasonal amplitude', yLabel: '% of oracle',
+    xTickFmt: v => v.toFixed(2), yTickFmt: v => v.toFixed(0) + '%',
+    valFmt: v => v.toFixed(2) + '%', endLabels: true,
+  });
+  const t = html('table');
+  const head = html('tr');
+  ['Amplitude', 'fixed', 'gbm', 'gbm_uniform', 'oracle', 'gbm_uniform − fixed (pts)',
+   'paired Δ profit', '95% CI'].forEach(h => head.appendChild(html('th', null, h)));
+  t.appendChild(head);
+  A.amplitudes.forEach((a, i) => {
+    const g = A.gap[i];
+    const tr = html('tr');
+    [a.toFixed(2),
+     A.series.fixed[i].toFixed(2) + '%',
+     A.series.gbm ? A.series.gbm[i].toFixed(2) + '%' : '—',
+     A.series.gbm_uniform[i].toFixed(2) + '%',
+     A.series.oracle[i].toFixed(2) + '%',
+     g.pts_of_oracle.toFixed(2),
+     fmt(g.mean_diff, 1),
+     `[${fmt(g.ci_low, 1)}, ${fmt(g.ci_high, 1)}]`]
+      .forEach(v => tr.appendChild(html('td', null, v)));
+    t.appendChild(tr);
+  });
+  document.getElementById('amp-table').replaceChildren(t);
+}
+
+/* ---------- 4. price paths ---------- */
+function renderPaths() {
+  const host = document.getElementById('paths-chart');
+  const note = document.getElementById('paths-note');
+  if (!DATA.paths) {
+    host.replaceChildren(html('div', 'empty-panel',
+      'not yet run — results/gbm_uniform/price_paths.json is missing.'));
+    document.getElementById('paths-legend').replaceChildren();
+    return;
+  }
+  const P = DATA.paths;
+  const colors = { gbm: cssVar('--series-2'), gbm_uniform: cssVar('--series-1') };
+  const xs = P.gbm.map((_, i) => i);
+  const all = P.gbm.concat(P.gbm_uniform);
+  const hi = Math.max(...all, P.band ? P.band[1] : 0);
+  const s = P.stats;
+  note.textContent = `Realised price each day of the baseline episode on seed 0 — the seed `
+    + `the original agent fails on. gbm spends ${s.gbm.at_max}/${s.gbm.n} steps at price_max `
+    + `and ${s.gbm.above_choke}/${s.gbm.n} above the choke; gbm_uniform `
+    + `${s.gbm_uniform.at_max}/${s.gbm_uniform.n} and ${s.gbm_uniform.above_choke}/`
+    + `${s.gbm_uniform.n}.`;
+  renderLegend('paths-legend', ['gbm', 'gbm_uniform'], colors);
+  lineChart({
+    hostId: 'paths-chart', xs,
+    series: { gbm: P.gbm, gbm_uniform: P.gbm_uniform }, colors,
+    yMin: 0, yMax: Math.ceil(hi * 10) / 10,
+    xLabel: 'day of episode', yLabel: 'price',
+    xTickFmt: v => String(v), yTickFmt: v => v.toFixed(1),
+    valFmt: v => v.toFixed(3), endLabels: false, xIsIndex: true,
+    refLines: [
+      P.choke != null ? { v: P.choke, label: `choke ${P.choke.toFixed(3)} (demand = 0 above)` } : {},
+      P.band ? { v: P.band[1], label: `price_max ${P.band[1].toFixed(3)}` } : {},
+    ].filter(r => r.v != null),
+  });
+  const t = html('table');
+  const head = html('tr');
+  ['Agent', 'min price', 'max price', 'steps at price_max', 'steps above choke', 'steps']
+    .forEach(h => head.appendChild(html('th', null, h)));
+  t.appendChild(head);
+  for (const n of ['gbm', 'gbm_uniform']) {
+    const tr = html('tr');
+    [n, s[n].min.toFixed(3), s[n].max.toFixed(3), `${s[n].at_max}/${s[n].n}`,
+     `${s[n].above_choke}/${s[n].n}`, s[n].n]
+      .forEach(v => tr.appendChild(html('td', null, v)));
+    t.appendChild(tr);
+  }
+  document.getElementById('paths-table').replaceChildren(t);
+}
+
+/* ---------- table toggles ---------- */
+for (const btn of document.querySelectorAll('button[data-table]')) {
+  btn.addEventListener('click', () => {
+    const wrap = document.getElementById(btn.dataset.table + '-table');
+    const hidden = wrap.hasAttribute('hidden');
+    if (hidden) wrap.removeAttribute('hidden'); else wrap.setAttribute('hidden', '');
+    btn.textContent = hidden ? 'Hide table' : 'Show table';
+  });
+}
+
+/* ---------- boot ---------- */
+for (const s of DATA.scenarios) {
+  const o = document.createElement('option');
+  o.value = s; o.textContent = s;
+  sel.appendChild(o);
+}
+sel.value = DATA.scenarios.includes('baseline') ? 'baseline' : DATA.scenarios[0];
+sel.addEventListener('change', renderLadder);
+document.getElementById('footer').textContent = DATA.footer;
+
+function renderAll() { renderKpis(); renderLadder(); renderAmplitude(); renderPaths(); }
+renderAll();
+addEventListener('resize', () => { renderLadder(); renderAmplitude(); renderPaths(); });
+
+</script>
+</body>
+</html>

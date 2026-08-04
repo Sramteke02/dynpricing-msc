@@ -49,6 +49,31 @@ dynpricing dashboard --results results/metrics.csv --out results/dashboard.png -
 dynpricing verify-oracle --config configs/calibrated.json --seeds 20
 ```
 
+### Regenerating the interactive dashboard
+
+`results/dashboard/index.html` is a single self-contained page (no server, no
+network, no external assets — open the file directly in a browser). It is
+**generated from the committed results files**, so it never holds numbers of its
+own; a panel with no underlying run renders an explicit "not yet run" state.
+
+```bash
+# after ANY new run, regenerate so the page matches what is on disk:
+python scripts/build_dashboard_html.py
+```
+
+It reads `results/metrics_aggregated.json`,
+`results/gbm_uniform/{metrics_aggregated,paired_gbm_uniform,price_paths}.json`,
+`results/gbm_uniform/diagnostics.log` and
+`results/seasonal_sweep/summary.json`. The script prints which panels it filled
+and which came out empty, so a stale or missing input is visible at build time.
+Two panels are currently empty by design: the oracle-verification KPI (run
+`dynpricing verify-oracle` and record its output under `results/`) and the RQ2
+LLM tile (needs `OPENAI_API_KEY`).
+
+The older `results/dashboard.png` is the static Matplotlib view from
+`dynpricing dashboard`; it predates the linear-demand model and does not include
+`gbm_uniform`.
+
 ### Reproducibility & rigour notes
 
 * The LLM agent pins a dated model snapshot, uses `temperature=0`, forces JSON
