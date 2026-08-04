@@ -49,7 +49,25 @@ dynpricing dashboard --results results/metrics.csv --out results/dashboard.png -
 dynpricing verify-oracle --config configs/calibrated.json --seeds 20
 ```
 
-### Regenerating the interactive dashboard
+### Live dashboard (Streamlit)
+
+`app/dashboard.py` runs agents **live** through the existing harness and reports
+what that run produced — pick agents, a scenario and a seed count in the sidebar
+and press Run:
+
+```bash
+pip install -e ".[app]"          # or: pip install streamlit
+streamlit run app/dashboard.py
+```
+
+The oracle is loaded from `results/seasonal_sweep/oracle_cache.json` when the
+scenario config fingerprint matches (it is deterministic given config and seed)
+and computed live otherwise; the page says which happened. Without
+`OPENAI_API_KEY` the `llm` agent is shown as pending and skipped — never
+estimated or faked. It imports the agents, env and harness; it does not modify
+them.
+
+### Regenerating the static dashboard
 
 `results/dashboard/index.html` is a single self-contained page (no server, no
 network, no external assets — open the file directly in a browser). It is
