@@ -67,6 +67,20 @@ and computed live otherwise; the page says which happened. Without
 estimated or faked. It imports the agents, env and harness; it does not modify
 them.
 
+**Deploying to Streamlit Community Cloud.** `requirements.txt` at the repo root
+is what Community Cloud installs from — it does *not* install the project
+itself, which is why `app/dashboard.py` adds `src/` to `sys.path`. Two things to
+know:
+
+* This repository is **private**. Community Cloud can only see it if you grant
+  the Streamlit GitHub app access to private repositories when you sign in
+  ("Authorize streamlit" → include private repos). Without that it reports the
+  code as not being in a GitHub repository even though it is.
+* The GBM agents retrain per seed, which is CPU-heavy for a free Cloud instance.
+  Start at 1–2 seeds there; the 5-seed default takes ~72s locally and will be
+  slower on Cloud.
+* Set `OPENAI_API_KEY` under the app's **Secrets**, not in the repo.
+
 ### Regenerating the static dashboard
 
 `results/dashboard/index.html` is a single self-contained page (no server, no
