@@ -20,6 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 boost = ["xgboost>=2.0", "lightgbm>=4.0"]
+# the openai package is the HTTP client for BOTH providers: Mistral's
+# La Plateforme exposes an OpenAI-compatible endpoint (see llm_agent.PROVIDERS)
 llm = ["openai>=1.0"]
 track = ["wandb>=0.16"]
 app = ["streamlit>=1.30", "altair>=5.0"]   # live dashboard: app/dashboard.py

@@ -63,6 +63,8 @@ def build_agent(name: str, cfg: EnvConfig, *, seed: int = 0, **kwargs) -> Agent:
         llm_kwargs = {}
         if "llm_model" in kwargs:
             llm_kwargs["model"] = kwargs["llm_model"]
+        if "llm_provider" in kwargs:
+            llm_kwargs["provider"] = kwargs["llm_provider"]
         if "llm_temperature" in kwargs:
             llm_kwargs["temperature"] = kwargs["llm_temperature"]
         if "llm_template_name" in kwargs:

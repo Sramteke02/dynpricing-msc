@@ -110,11 +110,17 @@ def cmd_run(args) -> None:
     agent_kwargs = {"llm_mode": args.llm_mode}
     if args.llm_model:
         agent_kwargs["llm_model"] = args.llm_model
-    if "llm" in agents and args.llm_mode == "api" and not os.environ.get("OPENAI_API_KEY"):
-        print("[warn] LLM agent is in 'api' mode but OPENAI_API_KEY is not set; "
-              "the run will fail loudly when it reaches the LLM agent.\n"
-              "       Use --llm-mode heuristic to run the explicit offline baseline.",
-              file=sys.stderr)
+    if args.llm_provider:
+        agent_kwargs["llm_provider"] = args.llm_provider
+    if "llm" in agents and args.llm_mode == "api":
+        from dynpricing.agents.llm_agent import DEFAULT_PROVIDER, PROVIDERS
+
+        env_var = PROVIDERS[args.llm_provider or DEFAULT_PROVIDER]["env_var"]
+        if not os.environ.get(env_var):
+            print(f"[warn] LLM agent is in 'api' mode but {env_var} is not set; "
+                  "the run will fail loudly when it reaches the LLM agent.\n"
+                  "       Use --llm-mode heuristic to run the explicit offline "
+                  "baseline.", file=sys.stderr)
 
     print(f"Running {len(agents)} agents x {len(scenarios)} scenarios x {len(seeds)} seeds")
     results = run_experiment(
@@ -169,19 +175,24 @@ def _collect_price_paths(cfg: EnvConfig, agents: list[str], seed: int = 0,
 
 def cmd_llm_smoke(args) -> None:
     """Cheap reliability/cost check for the LLM agent before any full run."""
-    from dynpricing.agents.llm_agent import LLMAgent, DEFAULT_MODEL
+    from dynpricing.agents.llm_agent import (
+        LLMAgent, DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS,
+    )
 
     cfg = _load_cfg(args.config)
-    has_key = bool(os.environ.get("OPENAI_API_KEY"))
+    provider = getattr(args, "provider", None) or DEFAULT_PROVIDER
+    env_var = PROVIDERS[provider]["env_var"]
+    has_key = bool(os.environ.get(env_var))
     want_api = args.mode == "api" and not args.dry_render
 
     if want_api and not has_key:
         print("=" * 70)
-        print("BLOCKED: --mode api requires OPENAI_API_KEY, which is not set.")
+        print(f"BLOCKED: --mode api requires {env_var} (provider={provider}), "
+              "which is not set.")
         print("No real API call will be made and no tokens will be spent.")
         print("Showing a token-free DRY RENDER instead so you can review the")
         print("exact prompts and the JSON parser's reliability now.")
-        print("To run the real smoke test: export OPENAI_API_KEY=sk-... and re-run.")
+        print(f"To run the real smoke test: export {env_var}=... and re-run.")
         print("=" * 70 + "\n")
         args.dry_render = True
 
@@ -190,7 +201,8 @@ def cmd_llm_smoke(args) -> None:
         return
 
     # Real path: api mode (with key) or explicit heuristic mode.
-    agent = LLMAgent(model=args.model, mode=args.mode, temperature=args.temperature)
+    agent = LLMAgent(model=args.model, mode=args.mode, temperature=args.temperature,
+                     provider=getattr(args, "provider", None) or DEFAULT_PROVIDER)
     env = MarketEnv(cfg)
     _, info = env.reset(seed=args.seed)
     state = info["state"]
@@ -438,6 +450,10 @@ def _print_ladder(agg: list[dict]) -> None:
 
 # --------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
+    from dynpricing.agents.llm_agent import (
+        DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS as _PROVIDERS,
+    )
+
     p = argparse.ArgumentParser(prog="dynpricing", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
@@ -460,17 +476,20 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--save-paths", action="store_true",
                    help="also save representative price paths for the dashboard")
     r.add_argument("--llm-mode", choices=["api", "heuristic"], default="api",
-                   help="LLM agent mode; 'api' fails loudly without OPENAI_API_KEY")
+                   help="LLM agent mode; 'api' fails loudly without the "
+                        "provider's API key")
     r.add_argument("--llm-model", default=None, help="override the pinned LLM model id")
+    r.add_argument("--llm-provider", default=None, choices=sorted(_PROVIDERS),
+                   help="LLM provider (default: mistral). Selects the base URL, "
+                        "the API-key env var and the default model.")
     r.set_defaults(func=cmd_run)
-
-    from dynpricing.agents.llm_agent import DEFAULT_MODEL
 
     s = sub.add_parser("llm-smoke", help="cheap reliability/cost check of the LLM agent")
     s.add_argument("--config", default=None)
     s.add_argument("--steps", type=int, default=8)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--model", default=DEFAULT_MODEL)
+    s.add_argument("--provider", default=DEFAULT_PROVIDER, choices=sorted(_PROVIDERS))
     s.add_argument("--temperature", type=float, default=0.0)
     s.add_argument("--mode", choices=["api", "heuristic"], default="api")
     s.add_argument("--dry-render", action="store_true",

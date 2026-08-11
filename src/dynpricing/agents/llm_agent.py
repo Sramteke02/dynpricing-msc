@@ -7,23 +7,36 @@ reliability auditing.
 
 Two explicit modes (no silent substitution):
 
-* ``mode="api"`` (default) -- the real OpenAI path. Requires ``OPENAI_API_KEY``.
-  If the key (or the ``openai`` package) is missing the agent **fails loudly**
-  at construction with a clear message. This is the mode that tests RQ2.
+* ``mode="api"`` (default) -- the real API path. Requires the *provider's* API
+  key (``MISTRAL_API_KEY`` by default, ``OPENAI_API_KEY`` for ``provider=
+  "openai"``). If the key (or the client package) is missing the agent **fails
+  loudly** at construction with a clear message. This is the mode that tests RQ2.
 * ``mode="heuristic"`` -- an explicit, clearly-logged rule-of-thumb used as a
   baseline / offline fallback. Every decision is flagged ``used_fallback=True``.
 
+Providers
+---------
+The provider is swappable via the ``provider`` argument; see :data:`PROVIDERS`.
+Mistral's La Plateforme exposes an **OpenAI-compatible** Chat Completions
+endpoint at ``https://api.mistral.ai/v1``, so both providers share one request
+path -- only the base URL, the key's environment variable, the model id and a
+couple of parameter quirks differ. That keeps the D3 model comparison honest:
+the same code, prompt and parser drive every model.
+
 For reproducibility the default model is a **pinned dated snapshot** and the
-temperature defaults to **0**. Every call logs the model id, template name, the
-full rendered prompt, the raw response, parsed decision, latency and token
-usage (see :class:`LLMDecision` and :meth:`dump_log`).
+temperature defaults to **0**. Every call logs the provider, model id, template
+name, the full rendered prompt, the raw response, parsed decision, latency and
+token usage (see :class:`LLMDecision` and :meth:`dump_log`).
 
 Supporting the desirable requirements:
-* **D1** structured decision + reasoning via the OpenAI Chat Completions API.
+* **D1** structured decision + reasoning via the Chat Completions API.
 * **D2** full per-call logging and a prompt template that is a constructor
   argument (an experimental variable).
-* **D3** the model id is a constructor argument, so a smaller and a larger model
-  can be compared under identical conditions.
+* **D3** provider and model id are constructor arguments, so models can be
+  compared under identical conditions.
+
+No key is ever read from, or written to, source: keys come from the environment
+(or a secrets file the environment is populated from) only.
 """
 
 from __future__ import annotations
@@ -39,9 +52,42 @@ import numpy as np
 from dynpricing.agents.base import Agent, action_to_reach_price
 from dynpricing.env.market_env import ACTIONS, MarketState
 
+#: Provider registry. Mistral's La Plateforme is OpenAI-compatible, so both
+#: entries drive the same ``chat.completions.create`` call; only these fields
+#: differ. Add a provider by adding a row -- no other code changes.
+#:
+#: ``supports_seed``: OpenAI accepts a ``seed`` request parameter for
+#: best-effort determinism. It is not part of Mistral's chat-completions
+#: schema (Mistral's own SDK calls the equivalent ``random_seed``), so we do
+#: not send it there rather than risk a 422 on every call. Determinism on the
+#: Mistral path therefore rests on ``temperature=0`` plus the response cache.
+PROVIDERS: dict[str, dict] = {
+    "mistral": {
+        "env_var": "MISTRAL_API_KEY",
+        "base_url": "https://api.mistral.ai/v1",
+        # Mistral Large 3 — pinned dated snapshot, matching this project's
+        # reproducibility convention. Magistral (the reasoning line) is fully
+        # deprecated on La Plateforme, so there is no dedicated reasoning model
+        # to pin; Large 3 is the general-purpose frontier model.
+        "default_model": "mistral-large-3-25-12",
+        "supports_seed": False,
+        "docs": "https://docs.mistral.ai/getting-started/models/models_overview/",
+    },
+    "openai": {
+        "env_var": "OPENAI_API_KEY",
+        "base_url": None,          # the SDK's own default
+        "default_model": "gpt-4o-mini-2024-07-18",
+        "supports_seed": True,
+        "docs": "https://platform.openai.com/docs/models",
+    },
+}
+
+#: Default provider. Mistral is the provider this project has access to.
+DEFAULT_PROVIDER = "mistral"
+
 #: Pinned, dated model snapshot for reproducibility. Override via the ``model``
 #: argument (e.g. a larger model) to support the D3 capability comparison.
-DEFAULT_MODEL = "gpt-4o-mini-2024-07-18"
+DEFAULT_MODEL = PROVIDERS[DEFAULT_PROVIDER]["default_model"]
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are an expert revenue-management pricing analyst for an online "
@@ -92,6 +138,7 @@ class LLMDecision:
     action: int
     reasoning: str
     used_fallback: bool
+    provider: str = ""        # "mistral" / "openai"; "" for the heuristic
     system_prompt: str = ""
     prompt: str = ""          # full rendered user prompt
     raw_response: str = ""
@@ -108,7 +155,7 @@ class LLMAgent(Agent):
 
     def __init__(
         self,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         temperature: float = 0.0,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         user_template: str | None = None,
@@ -119,15 +166,31 @@ class LLMAgent(Agent):
         force_fallback: bool = False,
         request_seed: int | None = 0,
         cache: bool = True,
+        provider: str = DEFAULT_PROVIDER,
+        client=None,
     ):
+        """``provider`` selects the row in :data:`PROVIDERS`; ``model`` defaults
+        to that provider's pinned snapshot.
+
+        ``client`` injects a pre-built chat-completions client. It exists so the
+        request/parse/fallback pipeline can be exercised **offline, with no key
+        and no cost** (see ``tests/test_llm_provider.py``). It is dependency
+        injection for tests, not a substitute result: whatever the injected
+        client returns is parsed and logged exactly like a real response.
+        """
         if force_fallback:
             mode = "heuristic"
         if mode not in ("api", "heuristic"):
             raise ValueError(f"mode must be 'api' or 'heuristic', got {mode!r}")
+        if provider not in PROVIDERS:
+            raise ValueError(
+                f"unknown provider {provider!r}; choose from {sorted(PROVIDERS)}")
 
+        self.provider = provider
+        self.provider_config = PROVIDERS[provider]
         self.mode = mode
-        self.model = model
-        self.name = f"llm:{model}"
+        self.model = model or self.provider_config["default_model"]
+        self.name = f"llm:{self.model}"
         self.temperature = float(temperature)
         self.system_prompt = system_prompt
         self.template_name = template_name
@@ -140,18 +203,26 @@ class LLMAgent(Agent):
         self._cache: dict[str, LLMDecision] = {}
         self._client = None
 
-        if self.mode == "api":
+        if client is not None:
+            self._client = client
+        elif self.mode == "api":
             self._client = self._init_client_strict(api_key)
 
     # -- client setup -------------------------------------------------------
     def _init_client_strict(self, api_key: str | None):
-        """Build the OpenAI client or fail loudly with an actionable message."""
-        key = api_key or os.environ.get("OPENAI_API_KEY")
+        """Build the provider's client or fail loudly with an actionable message.
+
+        The key is read from the provider's environment variable and is never
+        logged, echoed, or persisted.
+        """
+        env_var = self.provider_config["env_var"]
+        base_url = self.provider_config["base_url"]
+        key = api_key or os.environ.get(env_var)
         if not key:
             raise RuntimeError(
-                "LLMAgent(mode='api') requires an OpenAI API key but "
-                "OPENAI_API_KEY is not set.\n"
-                "  - Set it:   export OPENAI_API_KEY=sk-...\n"
+                f"LLMAgent(mode='api', provider={self.provider!r}) requires an "
+                f"API key but {env_var} is not set.\n"
+                f"  - Set it:   export {env_var}=...\n"
                 "  - Or run the explicit offline baseline instead: "
                 "LLMAgent(mode='heuristic')  (CLI: --llm-mode heuristic).\n"
                 "The heuristic mode is a documented rule-of-thumb, NOT the LLM, "
@@ -161,10 +232,15 @@ class LLMAgent(Agent):
             from openai import OpenAI
         except Exception as exc:  # pragma: no cover - import guard
             raise RuntimeError(
-                "LLMAgent(mode='api') requires the 'openai' package "
-                f"(pip install openai). Import failed: {exc}"
+                "LLMAgent(mode='api') uses the 'openai' package as the HTTP "
+                f"client (pip install openai). For provider={self.provider!r} it "
+                f"talks to {base_url or 'the OpenAI default endpoint'}, which is "
+                f"OpenAI-compatible. Import failed: {exc}"
             ) from exc
-        return OpenAI(api_key=key)
+        kwargs = {"api_key": key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        return OpenAI(**kwargs)
 
     @property
     def using_llm(self) -> bool:
@@ -244,7 +320,8 @@ class LLMAgent(Agent):
             return LLMDecision(
                 day=state.day, mode="api", model=self.model,
                 template_name=self.template_name, action=action, reasoning=reasoning,
-                used_fallback=False, system_prompt=self.system_prompt, prompt=prompt,
+                used_fallback=False, provider=self.provider,
+                system_prompt=self.system_prompt, prompt=prompt,
                 raw_response=raw, latency_s=latency, usage=usage,
             )
         except Exception as exc:
@@ -263,7 +340,9 @@ class LLMAgent(Agent):
             ],
             response_format={"type": "json_object"},
         )
-        if self.request_seed is not None:
+        # `seed` is OpenAI-only; Mistral's schema has no such field and would
+        # reject it, so it is omitted rather than sent hopefully.
+        if self.request_seed is not None and self.provider_config["supports_seed"]:
             kwargs["seed"] = self.request_seed
         resp = self._client.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content or ""
@@ -338,6 +417,8 @@ class LLMAgent(Agent):
         prompt_tokens = sum((d.usage or {}).get("prompt_tokens", 0) for d in self.log)
         completion_tokens = sum((d.usage or {}).get("completion_tokens", 0) for d in self.log)
         return {
+            "provider": self.provider,
+            "model": self.model,
             "decisions": len(self.log),
             "api_calls": len([d for d in calls if not d.used_fallback]),
             "fallbacks": len(fallbacks),
