@@ -17,6 +17,19 @@ wandb/
 !results/archive/*.png
 results/*.log
 
+# Secrets — API keys live in the environment or in one of these files, NEVER
+# in source. MISTRAL_API_KEY (and OPENAI_API_KEY) are read via os.environ only;
+# see llm_agent.PROVIDERS. Keep every pattern here even if the file does not
+# exist yet: the point is that creating one can never stage it by accident.
+.env
+.env.*
+!.env.example
+*.env
+secrets.toml
+.streamlit/secrets.toml
+.streamlit/*.toml
+!.streamlit/config.toml
+
 # Data (large, downloaded separately)
 data/*
 !data/README.md
