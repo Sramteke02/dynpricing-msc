@@ -65,11 +65,19 @@ PROVIDERS: dict[str, dict] = {
     "mistral": {
         "env_var": "MISTRAL_API_KEY",
         "base_url": "https://api.mistral.ai/v1",
-        # Mistral Large 3 — pinned dated snapshot, matching this project's
-        # reproducibility convention. Magistral (the reasoning line) is fully
-        # deprecated on La Plateforme, so there is no dedicated reasoning model
-        # to pin; Large 3 is the general-purpose frontier model.
-        "default_model": "mistral-large-3-25-12",
+        # Mistral Large, Dec-2025 snapshot — pinned, matching this project's
+        # reproducibility convention (the `-latest` alias would silently move
+        # under us and break comparability across runs).
+        #
+        # The id is what GET /v1/models actually serves. The docs' model table
+        # renders it as "mistral-large-3-25-12"; that string is rejected by the
+        # API. Verified against the live model list, not the docs.
+        #
+        # Reasoning line: `magistral-small-latest` is served and is the only
+        # Magistral left (the medium tier is retired). It is a *small* model, so
+        # it is not the default; set provider model explicitly to try it for a
+        # chain-of-thought comparison.
+        "default_model": "mistral-large-2512",
         "supports_seed": False,
         "docs": "https://docs.mistral.ai/getting-started/models/models_overview/",
     },
