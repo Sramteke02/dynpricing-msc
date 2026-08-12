@@ -15,7 +15,7 @@ import pytest
 from dynpricing.env.config import EnvConfig
 from dynpricing.env.market_env import MarketEnv, ACTIONS
 from dynpricing.agents.llm_agent import (
-    DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS, LLMAgent,
+    DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS, LLMAgent, LLMFallbackError,
 )
 from dynpricing.eval.harness import run_episode
 
@@ -64,6 +64,24 @@ class StubClient:
         self.chat.completions = StubCompletions(replies)
 
 
+class HTTPError(Exception):
+    """Mimics an SDK status error (429/5xx) without importing the SDK."""
+
+    def __init__(self, status, message="boom", retry_after=None):
+        super().__init__(f"Error code: {status} - {message}")
+        self.status_code = status
+        if retry_after is not None:
+            self.response = type("_R", (), {"headers": {"retry-after": retry_after}})()
+
+
+def agent_kwargs(**over):
+    """Defaults that keep offline tests instant: no pacing, no real sleeping."""
+    base = dict(mode="api", cache=False, min_call_interval=0.0,
+                backoff_base=0.0, sleep=lambda _s: None)
+    base.update(over)
+    return base
+
+
 @pytest.fixture
 def cfg():
     return EnvConfig(horizon=6, init_inventory=20000)
@@ -103,8 +121,8 @@ def test_seed_sent_for_openai_but_not_mistral(cfg, monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     reply = json.dumps({"action": 0, "reasoning": "hold"})
 
-    mistral = LLMAgent(mode="api", provider="mistral", client=StubClient([reply]),
-                       cache=False)
+    mistral = LLMAgent(provider="mistral", client=StubClient([reply]),
+                       **agent_kwargs())
     mistral.act(_state(cfg))
     sent = mistral._client.chat.completions.calls[0]
     assert "seed" not in sent
@@ -112,8 +130,8 @@ def test_seed_sent_for_openai_but_not_mistral(cfg, monkeypatch):
     assert sent["response_format"] == {"type": "json_object"}
     assert sent["temperature"] == 0.0
 
-    openai = LLMAgent(mode="api", provider="openai", client=StubClient([reply]),
-                      cache=False)
+    openai = LLMAgent(provider="openai", client=StubClient([reply]),
+                      **agent_kwargs())
     openai.act(_state(cfg))
     assert openai._client.chat.completions.calls[0]["seed"] == 0
 
@@ -122,7 +140,7 @@ def test_seed_sent_for_openai_but_not_mistral(cfg, monkeypatch):
 def test_structured_json_is_parsed_and_logged_without_fallback(cfg, monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     reply = json.dumps({"action": 2, "reasoning": "undercut; stock is ample"})
-    agent = LLMAgent(mode="api", client=StubClient([reply]), cache=False)
+    agent = LLMAgent(client=StubClient([reply]), **agent_kwargs())
 
     action = agent.act(_state(cfg))
 
@@ -141,7 +159,7 @@ def test_reasoning_model_prose_around_json_still_parses(cfg, monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     reply = ("Let me think. Inventory is ample and rivals are cheaper, so I should "
              'undercut.\n{"action": 3, "reasoning": "cut 10% to move stock"}\nDone.')
-    agent = LLMAgent(mode="api", client=StubClient([reply]), cache=False)
+    agent = LLMAgent(client=StubClient([reply]), **agent_kwargs())
 
     assert agent.act(_state(cfg)) == 3
     assert agent.log[-1].used_fallback is False
@@ -156,7 +174,7 @@ def test_reasoning_model_prose_around_json_still_parses(cfg, monkeypatch):
 ])
 def test_malformed_response_falls_back_and_says_why(cfg, monkeypatch, bad):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-    agent = LLMAgent(mode="api", client=StubClient([bad]), cache=False)
+    agent = LLMAgent(client=StubClient([bad]), **agent_kwargs(strict_llm=False))
 
     action = agent.act(_state(cfg))
 
@@ -167,17 +185,135 @@ def test_malformed_response_falls_back_and_says_why(cfg, monkeypatch, bad):
     assert entry.raw_response == bad           # the raw text is kept for audit
 
 
-def test_api_error_falls_back_and_records_the_error(cfg, monkeypatch):
+def test_non_retryable_error_falls_back_and_records_it(cfg, monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-    agent = LLMAgent(mode="api", client=StubClient([RuntimeError("429 rate limit")]),
-                     cache=False)
+    agent = LLMAgent(client=StubClient([HTTPError(401, "Invalid API Key")]),
+                     **agent_kwargs(strict_llm=False))
 
     action = agent.act(_state(cfg))
 
     entry = agent.log[-1]
     assert 0 <= action < len(ACTIONS)
     assert entry.used_fallback is True
-    assert "429 rate limit" in entry.fallback_reason
+    assert "401" in entry.fallback_reason
+
+
+# -- rate limiting: retry with backoff --------------------------------------
+def test_429_is_retried_with_exponential_backoff_then_succeeds(cfg, monkeypatch):
+    """A rate limit must cost a wait, never a heuristic fallback."""
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    slept = []
+    good = json.dumps({"action": 1, "reasoning": "ok"})
+    client = StubClient([HTTPError(429, "Rate limit exceeded"),
+                         HTTPError(429, "Rate limit exceeded"),
+                         good])
+    agent = LLMAgent(client=client, **agent_kwargs(
+        backoff_base=1.0, sleep=slept.append))
+
+    action = agent.act(_state(cfg))
+
+    assert action == 1
+    assert agent.log[-1].used_fallback is False        # no contamination
+    assert agent.contaminated is False
+    assert agent.n_retries == 2
+    assert slept == [1.0, 2.0]                          # 1s then 2s
+    assert len(client.chat.completions.calls) == 3
+
+
+def test_backoff_is_capped(cfg, monkeypatch):
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    slept = []
+    agent = LLMAgent(client=StubClient([HTTPError(429)]),
+                     **agent_kwargs(max_retries=6, backoff_base=1.0,
+                                    backoff_cap=4.0, strict_llm=False,
+                                    sleep=slept.append))
+    agent.act(_state(cfg))
+    assert slept == [1.0, 2.0, 4.0, 4.0, 4.0, 4.0]      # capped at 4s
+
+
+def test_retry_after_header_is_honoured(cfg, monkeypatch):
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    slept = []
+    good = json.dumps({"action": 0, "reasoning": "ok"})
+    agent = LLMAgent(
+        client=StubClient([HTTPError(429, retry_after="7"), good]),
+        **agent_kwargs(backoff_base=1.0, sleep=slept.append))
+    agent.act(_state(cfg))
+    assert slept == [7.0]              # server's number wins over our backoff
+
+
+def test_5xx_retried_but_4xx_is_not(cfg, monkeypatch):
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    good = json.dumps({"action": 0, "reasoning": "ok"})
+
+    ok = LLMAgent(client=StubClient([HTTPError(503), good]), **agent_kwargs())
+    ok.act(_state(cfg))
+    assert ok.n_retries == 1
+
+    # 401/400 cannot be fixed by waiting: fail immediately, do not burn retries
+    bad = LLMAgent(client=StubClient([HTTPError(401, "Invalid API Key")]),
+                   **agent_kwargs(strict_llm=False))
+    bad.act(_state(cfg))
+    assert bad.n_retries == 0
+    assert len(bad._client.chat.completions.calls) == 1
+
+
+def test_calls_are_paced_proactively(cfg, monkeypatch):
+    """Spacing is applied between calls, not only after a 429."""
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    slept = []
+    good = json.dumps({"action": 0, "reasoning": "ok"})
+    agent = LLMAgent(client=StubClient([good]),
+                     **agent_kwargs(min_call_interval=1.5, sleep=slept.append))
+    for _ in range(3):
+        agent.act(_state(cfg))
+
+    assert agent.n_throttle_waits == 2       # first call is free, then paced
+    assert all(0 < s <= 1.5 for s in slept)
+    assert agent.n_retries == 0
+
+
+# -- contamination guard ----------------------------------------------------
+def test_strict_mode_raises_rather_than_contaminating_the_episode(cfg, monkeypatch):
+    """CRITICAL: a post-retry fallback must never be silently accepted."""
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    agent = LLMAgent(client=StubClient([HTTPError(429)]),
+                     **agent_kwargs(max_retries=2))
+
+    with pytest.raises(LLMFallbackError, match="mix heuristic and LLM"):
+        agent.act(_state(cfg))
+    assert agent.n_retries == 2               # it really did retry first
+
+
+def test_strict_mode_is_the_default(cfg, monkeypatch):
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    agent = LLMAgent(client=StubClient(["not json"]), mode="api", cache=False,
+                     min_call_interval=0.0, sleep=lambda _s: None)
+    assert agent.strict_llm is True
+    with pytest.raises(LLMFallbackError):
+        agent.act(_state(cfg))
+
+
+def test_contamination_is_reported_when_strictness_is_relaxed(cfg, monkeypatch):
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    agent = LLMAgent(client=StubClient(["not json"]),
+                     **agent_kwargs(strict_llm=False))
+    agent.act(_state(cfg))
+
+    assert agent.contaminated is True
+    assert agent.fallback_count == 1
+    summary = agent.usage_summary()
+    assert summary["contaminated"] is True
+    assert summary["fallbacks"] == 1
+
+
+def test_heuristic_mode_is_not_contamination(cfg):
+    """Deliberate offline baseline != a contaminated LLM episode."""
+    agent = LLMAgent(mode="heuristic")
+    agent.act(_state(cfg))
+    assert agent.fallback_count == 1
+    assert agent.contaminated is False
+    assert agent.usage_summary()["contaminated"] is False
 
 
 # -- end to end through the real harness ------------------------------------
@@ -186,7 +322,7 @@ def test_full_episode_through_the_harness_offline(cfg, monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     replies = [json.dumps({"action": i % len(ACTIONS), "reasoning": f"step {i}"})
                for i in range(cfg.horizon)]
-    agent = LLMAgent(mode="api", client=StubClient(replies), cache=False)
+    agent = LLMAgent(client=StubClient(replies), **agent_kwargs())
 
     metrics = run_episode(agent, MarketEnv(cfg), seed=0)
 

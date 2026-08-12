@@ -135,6 +135,20 @@ Respond with ONLY this JSON object:
 TEMPLATES = {"default_v2": DEFAULT_USER_TEMPLATE}
 
 
+#: HTTP statuses worth retrying: rate limiting and transient server faults.
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+class LLMFallbackError(RuntimeError):
+    """A decision fell back to the heuristic while in ``strict_llm`` mode.
+
+    Raised so a *contaminated* episode can never be silently reported as an LLM
+    result. Rate limiting is handled by the retry loop before this point, so
+    reaching here means the failure survived every retry (or the model returned
+    output that could not be parsed).
+    """
+
+
 @dataclass
 class LLMDecision:
     """A fully-auditable record of a single pricing decision."""
@@ -176,6 +190,12 @@ class LLMAgent(Agent):
         cache: bool = True,
         provider: str = DEFAULT_PROVIDER,
         client=None,
+        max_retries: int = 5,
+        backoff_base: float = 1.0,
+        backoff_cap: float = 30.0,
+        min_call_interval: float = 1.0,
+        strict_llm: bool = True,
+        sleep=time.sleep,
     ):
         """``provider`` selects the row in :data:`PROVIDERS`; ``model`` defaults
         to that provider's pinned snapshot.
@@ -185,6 +205,22 @@ class LLMAgent(Agent):
         and no cost** (see ``tests/test_llm_provider.py``). It is dependency
         injection for tests, not a substitute result: whatever the injected
         client returns is parsed and logged exactly like a real response.
+
+        Rate limiting and result integrity:
+
+        * ``min_call_interval`` paces requests *proactively* — at least this
+          many seconds between call starts, so the limit is approached rather
+          than hit. 8 back-to-back calls were enough to trip Mistral's limit.
+        * ``max_retries`` / ``backoff_base`` / ``backoff_cap`` retry a 429 or a
+          transient 5xx with exponential backoff (1s, 2s, 4s … capped),
+          honouring a ``Retry-After`` header when the server sends one. Rate
+          limits therefore do not become heuristic fallbacks.
+        * ``strict_llm`` (default **True**) raises :class:`LLMFallbackError` if
+          a decision still falls back after all retries. An episode that mixes
+          heuristic and LLM decisions is not a valid RQ2 observation, so it
+          fails loudly instead of being quietly reported. Set it False for
+          exploratory runs; :meth:`usage_summary` then reports
+          ``contaminated`` and the fallback count.
         """
         if force_fallback:
             mode = "heuristic"
@@ -206,6 +242,16 @@ class LLMAgent(Agent):
         self.max_tokens = int(max_tokens)
         self.request_seed = request_seed
         self._use_cache = bool(cache)
+
+        self.max_retries = int(max_retries)
+        self.backoff_base = float(backoff_base)
+        self.backoff_cap = float(backoff_cap)
+        self.min_call_interval = float(min_call_interval)
+        self.strict_llm = bool(strict_llm)
+        self._sleep = sleep
+        self._last_call_started: float | None = None
+        self.n_retries = 0
+        self.n_throttle_waits = 0
 
         self.log: list[LLMDecision] = []
         self._cache: dict[str, LLMDecision] = {}
@@ -253,6 +299,22 @@ class LLMAgent(Agent):
     @property
     def using_llm(self) -> bool:
         return self.mode == "api" and self._client is not None
+
+    @property
+    def fallback_count(self) -> int:
+        """Decisions that fell back to the heuristic (0 in a clean api run)."""
+        return sum(1 for d in self.log if d.used_fallback)
+
+    @property
+    def contaminated(self) -> bool:
+        """True if an api-mode episode contains any heuristic decision.
+
+        A contaminated episode is not a valid LLM observation: its price path
+        is part model, part rule-of-thumb. Check this before recording any RQ2
+        result. With ``strict_llm=True`` it can never become True, because the
+        first fallback raises instead.
+        """
+        return self.mode == "api" and self.fallback_count > 0
 
     # -- prompt rendering ---------------------------------------------------
     def _action_menu(self) -> str:
@@ -324,20 +386,106 @@ class LLMAgent(Agent):
             if action is None:
                 d = self._heuristic(state, reason="unparseable LLM output")
                 d.raw_response, d.prompt, d.latency_s, d.usage = raw, prompt, latency, usage
-                return d
-            return LLMDecision(
-                day=state.day, mode="api", model=self.model,
-                template_name=self.template_name, action=action, reasoning=reasoning,
-                used_fallback=False, provider=self.provider,
-                system_prompt=self.system_prompt, prompt=prompt,
-                raw_response=raw, latency_s=latency, usage=usage,
-            )
+            else:
+                return LLMDecision(
+                    day=state.day, mode="api", model=self.model,
+                    template_name=self.template_name, action=action,
+                    reasoning=reasoning, used_fallback=False, provider=self.provider,
+                    system_prompt=self.system_prompt, prompt=prompt,
+                    raw_response=raw, latency_s=latency, usage=usage,
+                )
+        except LLMFallbackError:
+            raise
         except Exception as exc:
             d = self._heuristic(state, reason=f"LLM call error: {exc}")
             d.prompt, d.latency_s = prompt, time.perf_counter() - t0
-            return d
+
+        # Single exit for every api-mode fallback. Retries are already spent by
+        # here, so this is a genuine contamination of the episode.
+        if self.strict_llm:
+            raise LLMFallbackError(
+                f"LLM decision fell back to the heuristic at day {state.day} "
+                f"after {self.max_retries} retries: {d.fallback_reason}\n"
+                "This episode would mix heuristic and LLM decisions, which is "
+                "not a valid LLM result. Re-run it, or pass strict_llm=False to "
+                "accept a contaminated episode (usage_summary() then reports "
+                "contaminated=True and the fallback count)."
+            )
+        return d
+
+    # -- rate limiting ------------------------------------------------------
+    @staticmethod
+    def _status_of(exc: Exception) -> int | None:
+        """HTTP status behind an SDK exception, if there is one."""
+        for attr in ("status_code", "code"):
+            value = getattr(exc, attr, None)
+            if isinstance(value, int):
+                return value
+        resp = getattr(exc, "response", None)
+        status = getattr(resp, "status_code", None)
+        if isinstance(status, int):
+            return status
+        m = re.search(r"\b(4\d{2}|5\d{2})\b", str(exc))
+        return int(m.group(1)) if m else None
+
+    def _is_retryable(self, exc: Exception) -> bool:
+        status = self._status_of(exc)
+        if status in RETRYABLE_STATUS:
+            return True
+        if status is not None:            # a definite 4xx we cannot fix by waiting
+            return False
+        # no status at all: connection reset, timeout, DNS blip
+        text = str(exc).lower()
+        return any(t in text for t in
+                   ("timeout", "timed out", "connection", "temporarily", "rate limit"))
+
+    @staticmethod
+    def _retry_after(exc: Exception) -> float | None:
+        """Server-specified wait, when the response carries Retry-After."""
+        resp = getattr(exc, "response", None)
+        headers = getattr(resp, "headers", None)
+        if not headers:
+            return None
+        for key in ("retry-after", "Retry-After", "x-ratelimit-reset"):
+            try:
+                raw = headers.get(key)
+            except Exception:
+                raw = None
+            if raw:
+                try:
+                    return max(0.0, float(raw))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def _throttle(self) -> None:
+        """Proactively space out calls so the limit is approached, not hit."""
+        if self.min_call_interval <= 0 or self._last_call_started is None:
+            return
+        wait = self.min_call_interval - (time.perf_counter() - self._last_call_started)
+        if wait > 0:
+            self.n_throttle_waits += 1
+            self._sleep(wait)
 
     def _call_llm(self, prompt: str) -> tuple[str, dict | None]:
+        """One decision's worth of API traffic, with pacing and retries."""
+        for attempt in range(self.max_retries + 1):
+            self._throttle()
+            self._last_call_started = time.perf_counter()
+            try:
+                return self._request(prompt)
+            except Exception as exc:
+                if attempt >= self.max_retries or not self._is_retryable(exc):
+                    raise
+                delay = self._retry_after(exc)
+                if delay is None:
+                    delay = min(self.backoff_cap,
+                                self.backoff_base * (2 ** attempt))
+                self.n_retries += 1
+                self._sleep(delay)
+        raise RuntimeError("unreachable: retry loop exhausted")  # pragma: no cover
+
+    def _request(self, prompt: str) -> tuple[str, dict | None]:
         kwargs = dict(
             model=self.model,
             temperature=self.temperature,
@@ -431,6 +579,9 @@ class LLMAgent(Agent):
             "api_calls": len([d for d in calls if not d.used_fallback]),
             "fallbacks": len(fallbacks),
             "fallback_rate": (len(fallbacks) / len(self.log)) if self.log else 0.0,
+            "contaminated": self.contaminated,
+            "retries": self.n_retries,
+            "throttle_waits": self.n_throttle_waits,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
