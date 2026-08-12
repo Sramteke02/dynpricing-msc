@@ -198,6 +198,31 @@ def test_non_retryable_error_falls_back_and_records_it(cfg, monkeypatch):
     assert "401" in entry.fallback_reason
 
 
+# -- prompt template --------------------------------------------------------
+def test_default_template_states_no_infeasible_unit_quota(cfg):
+    """v2 asked for inventory/steps_left units per period — unreachable at any
+    price — and the model cut to unit cost chasing it. v3 must not restate it."""
+    from dynpricing.agents.llm_agent import DEFAULT_TEMPLATE_NAME, TEMPLATES
+
+    agent = LLMAgent(mode="heuristic")
+    prompt = agent.render_prompt(_state(cfg))
+
+    assert agent.template_name == DEFAULT_TEMPLATE_NAME == "default_v3"
+    assert "units per remaining period" not in prompt
+    assert "Even sell-through" not in prompt
+    # the pacing *facts* RQ3 needs are still exposed
+    assert "Remaining inventory" in prompt
+    assert "PERIODS REMAINING" in prompt
+    assert "pacing" in prompt.lower()
+    # and v2 stays available so the pair can be compared
+    assert "units per remaining period" in TEMPLATES["default_v2"]
+
+
+def test_v2_template_still_selectable_for_comparison(cfg):
+    agent = LLMAgent(mode="heuristic", template_name="default_v2")
+    assert "units per remaining period" in agent.render_prompt(_state(cfg))
+
+
 # -- rate limiting: retry with backoff --------------------------------------
 def test_429_is_retried_with_exponential_backoff_then_succeeds(cfg, monkeypatch):
     """A rate limit must cost a wait, never a heuristic fallback."""

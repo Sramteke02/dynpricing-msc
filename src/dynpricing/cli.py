@@ -285,8 +285,10 @@ def _llm_dry_render(cfg, args) -> None:
     checks = {
         "exposes remaining inventory": "Remaining inventory" in sample,
         "exposes periods remaining": "PERIODS REMAINING" in sample,
-        "exposes sell-through rate": "sell-through" in sample,
         "invites pacing reasoning": "pacing" in sample.lower(),
+        # regression guard: v2 stated a fixed units-per-period quota the market
+        # could not meet, and the model cut price to unit cost chasing it.
+        "no infeasible unit quota": "units per remaining period" not in sample,
     }
     print("--- prompt content checks (for RQ3) ---")
     for k, v in checks.items():

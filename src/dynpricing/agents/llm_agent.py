@@ -132,7 +132,55 @@ Respond with ONLY this JSON object:
 {{"action": <integer 0-{max_action}>, "reasoning": "<one or two sentences; mention pacing if relevant>"}}
 """
 
-TEMPLATES = {"default_v2": DEFAULT_USER_TEMPLATE}
+#: v3 — the same prompt as v2 with **one** change: the pacing guidance no longer
+#: states a fixed unit quota.
+#:
+#: Why. v2 printed "Even sell-through to clear stock: about {sell_rate} units per
+#: remaining period", computed as inventory/steps_left with no check that the
+#: market can absorb it. On the calibrated config that asks for ~131 units/period
+#: when linear demand caps at ~79 even priced at cost. Observed effect on
+#: mistral-large-2512, baseline seed 0: the model read "sales far below target"
+#: every period and cut price monotonically from 2.100 to the 0.840 floor by
+#: day ~40, then sat there — 46 of the first 130 days at exactly unit cost, i.e.
+#: zero margin. It was obeying an unsatisfiable instruction.
+#:
+#: v3 keeps the inventory and horizon facts (RQ3 needs them) and asks for
+#: profitable selling without a quota. It deliberately does NOT add advice like
+#: "never price near cost": that would patch the observed failure directly and
+#: over-fit the prompt to one result. Removing the infeasible target is the fix;
+#: if the model still floors, that is a finding about the model.
+USER_TEMPLATE_V3 = """You are pricing one product for the next selling period in a competitive market.
+
+Current market state:
+- Our current price: {own_price:.2f}  (allowed band {price_min:.2f} to {price_max:.2f})
+- Unit cost: {unit_cost:.2f}
+- Competitor prices: {competitor_prices}
+- Units sold last period: {demand_level:.0f}
+- Remaining inventory: {inventory} units
+- Periods elapsed: {day} of {horizon}; PERIODS REMAINING: {steps_left}
+- Day-of-week index (0=Mon..6=Sun): {day_of_week}; season index (0-3): {season}
+
+Think about margin vs. volume AND inventory pacing: aim to sell as much as is
+profitable while avoiding a large leftover stock at the end of the horizon.
+There is no fixed volume target to hit. Demand is limited by what the market
+will bear at a given price, so units sold coming in lower than you might like is
+information about demand, not by itself a reason to keep cutting price.
+
+Choose exactly one action:
+{action_menu}
+
+Respond with ONLY this JSON object:
+{{"action": <integer 0-{max_action}>, "reasoning": "<one or two sentences; mention pacing if relevant>"}}
+"""
+
+TEMPLATES = {
+    "default_v2": DEFAULT_USER_TEMPLATE,   # kept: the quota version, for contrast
+    "default_v3": USER_TEMPLATE_V3,
+}
+
+#: Default template. v2 remains selectable so the pair can be compared as the
+#: experimental variable D2 says the template is.
+DEFAULT_TEMPLATE_NAME = "default_v3"
 
 
 #: HTTP statuses worth retrying: rate limiting and transient server faults.
@@ -181,7 +229,7 @@ class LLMAgent(Agent):
         temperature: float = 0.0,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         user_template: str | None = None,
-        template_name: str = "default_v2",
+        template_name: str = DEFAULT_TEMPLATE_NAME,
         api_key: str | None = None,
         max_tokens: int = 300,
         mode: str = "api",
@@ -238,7 +286,8 @@ class LLMAgent(Agent):
         self.temperature = float(temperature)
         self.system_prompt = system_prompt
         self.template_name = template_name
-        self.user_template = user_template or TEMPLATES.get(template_name, DEFAULT_USER_TEMPLATE)
+        self.user_template = user_template or TEMPLATES.get(
+            template_name, TEMPLATES[DEFAULT_TEMPLATE_NAME])
         self.max_tokens = int(max_tokens)
         self.request_seed = request_seed
         self._use_cache = bool(cache)
