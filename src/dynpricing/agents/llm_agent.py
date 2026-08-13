@@ -201,9 +201,15 @@ TEMPLATES = {
     "default_v4": USER_TEMPLATE_V4,
 }
 
-#: Default template. v2 remains selectable so the pair can be compared as the
-#: experimental variable D2 says the template is.
-DEFAULT_TEMPLATE_NAME = "default_v3"
+#: Default template. v2 and v3 remain selectable so each pair can be compared as
+#: the experimental variable D2 says the template is.
+#:
+#: Promoted v3 -> v4 on the isolation test: baseline seed 1 went 56.22% -> 95.71%
+#: of oracle from that single added line, and price cuts made while already the
+#: cheapest in the market went 123 -> 0. That test re-ran the seed chosen
+#: *because* it failed, so it establishes the mechanism, not the expected level;
+#: the unbiased mean comes from fresh seeds.
+DEFAULT_TEMPLATE_NAME = "default_v4"
 
 
 #: HTTP statuses worth retrying: rate limiting and transient server faults.

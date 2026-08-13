@@ -207,9 +207,11 @@ def test_default_template_states_no_infeasible_unit_quota(cfg):
     agent = LLMAgent(mode="heuristic")
     prompt = agent.render_prompt(_state(cfg))
 
-    assert agent.template_name == DEFAULT_TEMPLATE_NAME == "default_v3"
+    assert agent.template_name == DEFAULT_TEMPLATE_NAME == "default_v4"
     assert "units per remaining period" not in prompt
     assert "Even sell-through" not in prompt
+    # v4 keeps v3's fix and adds the explicit comparison
+    assert "THE COMPETITOR AVERAGE" in prompt
     # the pacing *facts* RQ3 needs are still exposed
     assert "Remaining inventory" in prompt
     assert "PERIODS REMAINING" in prompt
