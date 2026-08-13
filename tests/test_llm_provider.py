@@ -218,6 +218,43 @@ def test_default_template_states_no_infeasible_unit_quota(cfg):
     assert "units per remaining period" in TEMPLATES["default_v2"]
 
 
+def test_v4_states_the_competitor_comparison_explicitly():
+    """v3 left the comparison to the model, which read 1.97 as 'lower' than 1.00."""
+    from dynpricing.env.market_env import MarketState
+
+    # the exact state mis-read on baseline seed 1, day 250
+    state = MarketState(own_price=1.00, competitor_prices=(2.01, 1.97),
+                        unit_cost=0.84, demand_level=54, inventory=29446,
+                        day_of_week=5, day=250, season=2, horizon=365,
+                        price_min=0.84, price_max=5.972, ref_price=2.1)
+
+    v3 = LLMAgent(mode="heuristic", template_name="default_v3").render_prompt(state)
+    v4 = LLMAgent(mode="heuristic", template_name="default_v4").render_prompt(state)
+
+    assert "BELOW" not in v3                      # v3 leaves it to be inferred
+    assert "Competitor average: 1.99" in v4
+    assert "-50% (BELOW) THE COMPETITOR AVERAGE" in v4
+    # v4 is otherwise v3: same length bar the one added line
+    assert len(v4.splitlines()) == len(v3.splitlines()) + 1
+
+
+@pytest.mark.parametrize("own,comps,word", [
+    (1.00, (2.01, 1.97), "BELOW"),
+    (3.00, (2.01, 1.97), "ABOVE"),
+    (1.99, (2.01, 1.97), "LEVEL WITH"),
+])
+def test_v4_gap_direction(own, comps, word):
+    from dynpricing.env.market_env import MarketState
+
+    state = MarketState(own_price=own, competitor_prices=comps, unit_cost=0.84,
+                        demand_level=50, inventory=1000, day_of_week=0, day=1,
+                        season=0, horizon=365, price_min=0.84, price_max=5.972,
+                        ref_price=2.1)
+    prompt = LLMAgent(mode="heuristic",
+                      template_name="default_v4").render_prompt(state)
+    assert f"({word}) THE COMPETITOR AVERAGE" in prompt
+
+
 def test_v2_template_still_selectable_for_comparison(cfg):
     agent = LLMAgent(mode="heuristic", template_name="default_v2")
     assert "units per remaining period" in agent.render_prompt(_state(cfg))

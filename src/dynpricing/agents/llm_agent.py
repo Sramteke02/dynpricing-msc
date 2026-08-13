@@ -173,9 +173,32 @@ Respond with ONLY this JSON object:
 {{"action": <integer 0-{max_action}>, "reasoning": "<one or two sentences; mention pacing if relevant>"}}
 """
 
+#: v4 — v3 plus ONE added line: the agent's price stated *relative* to the
+#: competitor average, computed in code.
+#:
+#: Why. v3 lists competitor prices as bare numbers and leaves the comparison to
+#: the model, which repeatedly got it wrong in the same direction. On baseline
+#: seed 1 (56.22% of oracle) it described competitor prices roughly double its
+#: own as "lower" and cut to "improve competitiveness" — e.g. at day 250, own
+#: 1.00 against competitors 2.01/1.97: "Lowering price by 5% improves
+#: competitiveness against lower competitor prices (1.97)". Those spurious cuts
+#: drove the descent (days 20-90: 27 cuts vs 13 raises) and then blocked
+#: recovery: climbing 1.00 -> 1.99 needs 15 consecutive +5% raises, its longest
+#: streak was 6, and one raise+lower pair nets 0.9975 — a slow loss.
+#:
+#: v4 removes the inference rather than instructing the model to do it better.
+#: Nothing else changes, so v3 vs v4 isolates the comparison error.
+USER_TEMPLATE_V4 = USER_TEMPLATE_V3.replace(
+    "- Competitor prices: {competitor_prices}\n",
+    "- Competitor prices: {competitor_prices}\n"
+    "- Competitor average: {competitor_mean:.2f}. YOUR PRICE IS "
+    "{price_gap_pct:+.0f}% ({price_gap_word}) THE COMPETITOR AVERAGE.\n",
+)
+
 TEMPLATES = {
     "default_v2": DEFAULT_USER_TEMPLATE,   # kept: the quota version, for contrast
     "default_v3": USER_TEMPLATE_V3,
+    "default_v4": USER_TEMPLATE_V4,
 }
 
 #: Default template. v2 remains selectable so the pair can be compared as the
@@ -378,7 +401,17 @@ class LLMAgent(Agent):
     def render_prompt(self, state: MarketState) -> str:
         steps_left = max(0, state.horizon - state.day)
         sell_rate = state.inventory / max(1, steps_left)
+        # computed here, not left to the model: v3 and earlier listed bare
+        # competitor prices and the model repeatedly misread the direction.
+        comp_mean = state.competitor_mean
+        gap_pct = ((state.own_price / comp_mean - 1.0) * 100.0
+                   if comp_mean > 0 else 0.0)
+        gap_word = ("ABOVE" if gap_pct > 0.5 else
+                    "BELOW" if gap_pct < -0.5 else "LEVEL WITH")
         return self.user_template.format(
+            competitor_mean=comp_mean,
+            price_gap_pct=gap_pct,
+            price_gap_word=gap_word,
             own_price=state.own_price,
             unit_cost=state.unit_cost,
             competitor_prices=", ".join(f"{c:.2f}" for c in state.competitor_prices),
