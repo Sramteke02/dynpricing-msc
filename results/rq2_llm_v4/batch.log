@@ -1,0 +1,38 @@
+[17:28:32] seed 2 attempt 1 -> seed2.log
+[19:06:24] seed 2 exit=0 OK
+    elapsed 98 min | done 1 | failed 0
+
+[19:06:24] seed 3 attempt 1 -> seed3.log
+[20:44:23] seed 3 exit=0 OK
+    elapsed 196 min | done 2 | failed 0
+
+[20:44:23] seed 4 attempt 1 -> seed4.log
+[22:22:27] seed 4 exit=0 OK
+    elapsed 294 min | done 3 | failed 0
+
+[22:22:27] seed 5 attempt 1 -> seed5.log
+[00:00:12] seed 5 exit=0 OK
+    elapsed 392 min | done 4 | failed 0
+
+[00:00:12] seed 6 attempt 1 -> seed6.log
+[01:37:56] seed 6 exit=0 OK
+    elapsed 489 min | done 5 | failed 0
+
+[01:37:56] seed 0 attempt 1 -> seed0.log
+[01:37:56] seed 0 exit=1 FAILED
+[01:37:56] seed 0 attempt 2 -> seed0.log
+[01:37:56] seed 0 exit=1 FAILED
+    elapsed 489 min | done 5 | failed 1
+
+==============================================================
+ seed  % of oracle  gross profit  fallbacks     cost
+    2       95.27%      18,008.4          0   0.1068
+    3       95.18%      18,233.6          0   0.1068
+    4       95.77%      18,299.2          0   0.1068
+    5       95.04%      18,100.0          0   0.1070
+    6       95.08%      18,086.6          0   0.1066
+
+n=5  mean 95.27%  min 95.04%  max 95.77%  spread 0.73 pts  sd 0.29
+total cost $0.5340  wall 489 min
+
+FAILED (excluded from the mean, not silently dropped): [0]

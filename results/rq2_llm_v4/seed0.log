@@ -1,0 +1,47 @@
+rate-limit headers: {'x-ratelimit-limit-tokens-minute': '250000', 'x-ratelimit-remaining-tokens-minute': '249995', 'x-ratelimit-tokens-query-cost': '5', 'x-ratelimit-limit-req-minute': '4', 'x-ratelimit-remaining-req-minute': '3'}
+limit 4 req/min -> pacing 16.05s (3.74 req/min)
+seed=0 scenario=baseline projected 98 min
+
+model=mistral-large-2512 template=default_v4 strict=True
+
+  day 10/365  price=2.095  elapsed=2.6min  eta=93.3min  retries=0
+  day 20/365  price=2.199  elapsed=5.3min  eta=90.9min  retries=0
+  day 30/365  price=2.199  elapsed=7.9min  eta=88.6min  retries=0
+  day 40/365  price=2.309  elapsed=10.6min  eta=86.2min  retries=0
+  day 50/365  price=2.309  elapsed=13.3min  eta=83.7min  retries=0
+  day 60/365  price=2.194  elapsed=16.0min  eta=81.2min  retries=0
+  day 70/365  price=2.084  elapsed=18.8min  eta=79.3min  retries=0
+  day 80/365  price=2.084  elapsed=21.3min  eta=76.0min  retries=0
+  day 90/365  price=2.189  elapsed=24.0min  eta=73.3min  retries=0
+  day 100/365  price=2.074  elapsed=26.7min  eta=70.7min  retries=0
+  day 110/365  price=2.074  elapsed=29.3min  eta=68.0min  retries=0
+  day 120/365  price=2.074  elapsed=32.0min  eta=65.4min  retries=0
+  day 130/365  price=2.069  elapsed=34.7min  eta=62.7min  retries=0
+  day 140/365  price=2.069  elapsed=37.4min  eta=60.1min  retries=0
+  day 150/365  price=2.172  elapsed=40.0min  eta=57.4min  retries=0
+  day 160/365  price=2.167  elapsed=42.7min  eta=54.7min  retries=0
+  day 170/365  price=2.058  elapsed=45.4min  eta=52.1min  retries=0
+  day 180/365  price=2.161  elapsed=48.1min  eta=49.4min  retries=0
+  day 190/365  price=2.161  elapsed=50.8min  eta=46.7min  retries=0
+  day 200/365  price=2.161  elapsed=53.4min  eta=44.1min  retries=0
+  day 210/365  price=2.048  elapsed=56.1min  eta=41.4min  retries=0
+  day 220/365  price=2.150  elapsed=58.8min  eta=38.7min  retries=0
+  day 230/365  price=2.150  elapsed=61.5min  eta=36.1min  retries=0
+  day 240/365  price=2.150  elapsed=64.1min  eta=33.4min  retries=0
+  day 250/365  price=2.038  elapsed=66.9min  eta=30.8min  retries=0
+  day 260/365  price=2.140  elapsed=69.5min  eta=28.1min  retries=0
+  day 270/365  price=2.140  elapsed=72.2min  eta=25.4min  retries=0
+  day 280/365  price=2.129  elapsed=74.8min  eta=22.7min  retries=0
+  day 290/365  price=2.129  elapsed=77.5min  eta=20.0min  retries=0
+  day 300/365  price=2.129  elapsed=80.2min  eta=17.4min  retries=0
+  day 310/365  price=2.129  elapsed=82.9min  eta=14.7min  retries=0
+  day 320/365  price=2.023  elapsed=85.6min  eta=12.0min  retries=0
+  day 330/365  price=2.023  elapsed=88.2min  eta=9.4min  retries=0
+  day 340/365  price=2.023  elapsed=90.9min  eta=6.7min  retries=0
+  day 350/365  price=2.124  elapsed=93.6min  eta=4.0min  retries=0
+  day 360/365  price=2.113  elapsed=96.3min  eta=1.3min  retries=0
+  day 365/365  price=2.219  elapsed=97.6min  eta=0.0min  retries=0
+
+wall 97.6 min | decisions 365 api_calls=365 fallbacks=0 contaminated=False retries=0
+tokens 171,048  cost $0.1065
+gross_profit 17,988.2 (95.73% of oracle)
