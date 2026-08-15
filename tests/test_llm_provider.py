@@ -257,6 +257,39 @@ def test_v4_gap_direction(own, comps, word):
     assert f"({word}) THE COMPETITOR AVERAGE" in prompt
 
 
+def test_v5_states_the_season_without_leaking_the_optimum(cfg):
+    """v5 = v4 + one line naming the seasonal demand state and its direction."""
+    from dynpricing.agents.llm_agent import SEASON_STATES
+
+    state = _state(cfg)
+    v4 = LLMAgent(mode="heuristic", template_name="default_v4").render_prompt(state)
+    v5 = LLMAgent(mode="heuristic", template_name="default_v5").render_prompt(state)
+
+    assert len(v5.splitlines()) == len(v4.splitlines()) + 1
+    assert "SEASONAL DEMAND is currently" in v5
+    assert SEASON_STATES[int(state.season)] in v5
+    # it may state the demand state, never the answer
+    for banned in ("optimal price", "p*", "should charge", "set price to",
+                   "unit_cost", "a0", "elasticity"):
+        assert banned not in v5.lower()
+
+
+def test_v5_season_wording_matches_the_true_seasonal_factor():
+    """Each quarter's wording must agree with the environment's own S(t)."""
+    from dynpricing.env.demand import DemandModel
+    from dynpricing.agents.llm_agent import SEASON_STATES
+    from dynpricing.eval.harness import default_scenarios
+
+    cfg = EnvConfig.load("configs/calibrated.json")
+    sc = {s.name: s for s in default_scenarios(cfg)}["strong_seasonality"].config
+    demand = DemandModel(sc)
+    for quarter, day in {0: 20, 1: 115, 2: 210, 3: 300}.items():
+        s_now, s_next = demand.seasonal_factor(day), demand.seasonal_factor(day + 5)
+        wording = SEASON_STATES[quarter]
+        assert ("ABOVE" in wording) == (s_now > 1.0)
+        assert ("RISING" in wording) == (s_next > s_now)
+
+
 def test_v2_template_still_selectable_for_comparison(cfg):
     agent = LLMAgent(mode="heuristic", template_name="default_v2")
     assert "units per remaining period" in agent.render_prompt(_state(cfg))

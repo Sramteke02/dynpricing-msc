@@ -195,10 +195,39 @@ USER_TEMPLATE_V4 = USER_TEMPLATE_V3.replace(
     "{price_gap_pct:+.0f}% ({price_gap_word}) THE COMPETITOR AVERAGE.\n",
 )
 
+#: v5 — v4 plus ONE added line: the seasonal demand state in words.
+#:
+#: Why. Under strong_seasonality the true optimum p*(t) swings 1.365-3.321
+#: (sd 0.491), but v4 moved with sd 0.08 and correlated only 0.20/0.56/0.25 with
+#: p*(t) across seeds 7/8/9 — a sixth of the needed amplitude, scoring 88.30%
+#: against gbm_uniform's 95.2% (which correlates 0.66-0.90). The LLM priced at a
+#: sensible static level and ignored the season.
+#:
+#: The prompt already gave it "season index (0-3)" as a bare integer. v5 says
+#: what that integer MEANS, exactly as v4 did for the bare competitor prices:
+#: level relative to average, and direction of travel. It is derived from the
+#: season index already in the state — no demand parameters, no amplitude, and
+#: emphatically no optimal price. If the LLM still does not track, the failure
+#: is not that the seasonal signal was hidden.
+SEASON_STATES = {
+    0: "ABOVE AVERAGE and RISING toward the annual peak",
+    1: "ABOVE AVERAGE but FALLING back from the annual peak",
+    2: "BELOW AVERAGE and FALLING toward the annual trough",
+    3: "BELOW AVERAGE but RISING back from the annual trough",
+}
+
+USER_TEMPLATE_V5 = USER_TEMPLATE_V4.replace(
+    "- Day-of-week index (0=Mon..6=Sun): {day_of_week}; season index (0-3): {season}\n",
+    "- Day-of-week index (0=Mon..6=Sun): {day_of_week}; season index (0-3): {season}\n"
+    "- SEASONAL DEMAND is currently {season_state}. Demand at any given price is "
+    "higher when seasonal demand is high and lower when it is low.\n",
+)
+
 TEMPLATES = {
     "default_v2": DEFAULT_USER_TEMPLATE,   # kept: the quota version, for contrast
     "default_v3": USER_TEMPLATE_V3,
     "default_v4": USER_TEMPLATE_V4,
+    "default_v5": USER_TEMPLATE_V5,
 }
 
 #: Default template. v2 and v3 remain selectable so each pair can be compared as
@@ -418,6 +447,7 @@ class LLMAgent(Agent):
             competitor_mean=comp_mean,
             price_gap_pct=gap_pct,
             price_gap_word=gap_word,
+            season_state=SEASON_STATES.get(int(state.season), "UNKNOWN"),
             own_price=state.own_price,
             unit_cost=state.unit_cost,
             competitor_prices=", ".join(f"{c:.2f}" for c in state.competitor_prices),
