@@ -77,13 +77,38 @@ def config_key(cfg: EnvConfig) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
-def oracle_profit(cfg: EnvConfig, seed: int) -> float | None:
-    """The committed oracle for this exact (config, seed) — no recompute."""
-    if not ORACLE_CACHE.exists():
-        return None
-    cache = json.loads(ORACLE_CACHE.read_text())
-    entry = cache.get(f"oracle:{config_key(cfg)}:{seed}")
-    return entry["gross_profit"] if entry else None
+#: committed 5-agent run: has oracle rows for every scenario x seed
+METRICS_CSV = ROOT / "results" / "gbm_uniform" / "metrics.csv"
+
+
+def oracle_profit(cfg: EnvConfig, seed: int, scenario: str) -> float | None:
+    """The committed oracle for this exact (config, seed) — never recomputed.
+
+    Two sources, in order:
+
+    1. ``oracle_cache.json`` — keyed by config fingerprint, written by the
+       amplitude sweep. Only covers baseline-with-varied-amplitude configs.
+    2. ``results/gbm_uniform/metrics.csv`` — the committed 5-agent run, which
+       has oracle rows for all four scenarios x 30 seeds. This is what covers
+       the non-baseline scenarios: e.g. strong_seasonality also changes
+       holiday_days, so its fingerprint is not in the sweep cache.
+
+    Using the committed oracle rather than recomputing keeps the LLM scored
+    against exactly the ceiling the other agents were scored against.
+    """
+    if ORACLE_CACHE.exists():
+        cache = json.loads(ORACLE_CACHE.read_text())
+        entry = cache.get(f"oracle:{config_key(cfg)}:{seed}")
+        if entry:
+            return entry["gross_profit"]
+    if METRICS_CSV.exists():
+        import csv
+        with METRICS_CSV.open() as fh:
+            for row in csv.DictReader(fh):
+                if (row["agent"] == "oracle" and row["scenario"] == scenario
+                        and int(row["seed"]) == seed):
+                    return float(row["gross_profit"])
+    return None
 
 
 class ProgressAgent(Agent):
@@ -171,7 +196,7 @@ def main() -> int:
         "wall_clock_s": wall, "usage": summary, "cost_usd": cost,
     }
     if metrics is not None:
-        orc = oracle_profit(scenario.config, args.seed)
+        orc = oracle_profit(scenario.config, args.seed, args.scenario)
         result.update({
             "gross_profit": metrics.gross_profit, "revenue": metrics.revenue,
             "market_share": metrics.market_share,

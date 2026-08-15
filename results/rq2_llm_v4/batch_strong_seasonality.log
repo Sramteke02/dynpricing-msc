@@ -1,0 +1,20 @@
+[01:41:09] seed 7 attempt 1 -> seed7_strong_seasonality.log
+[03:18:37] seed 7 exit=0 OK
+    elapsed 99 min | done 1 | failed 0
+
+[03:20:07] seed 8 attempt 1 -> seed8_strong_seasonality.log
+[04:57:50] seed 8 exit=0 OK
+    elapsed 198 min | done 2 | failed 0
+
+[04:59:20] seed 9 attempt 1 -> seed9_strong_seasonality.log
+[12:21:25] seed 9 exit=0 OK
+    elapsed 640 min | done 3 | failed 0
+
+==============================================================
+ seed  % of oracle  gross profit  fallbacks     cost
+    7       87.41%      18,415.5          0   0.1073
+    8       89.74%      19,134.0          0   0.1068
+    9       87.75%      18,878.8          0   0.1070
+
+n=3  mean 88.30%  min 87.41%  max 89.74%  spread 2.33 pts  sd 1.26
+total cost $0.3211  wall 640 min

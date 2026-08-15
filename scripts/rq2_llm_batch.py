@@ -25,12 +25,18 @@ ROOT = Path(__file__).resolve().parents[1]
 EPISODE = ROOT / "scripts" / "rq2_llm_episode.py"
 
 
-def run_seed(seed: int, template: str | None, out_dir: Path, attempt: int) -> bool:
+def stem(seed: int, scenario: str) -> str:
+    """Must match the episode script's own naming."""
+    return f"seed{seed}" + ("" if scenario == "baseline" else f"_{scenario}")
+
+
+def run_seed(seed: int, template: str | None, out_dir: Path, attempt: int,
+             scenario: str = "baseline") -> bool:
     cmd = [sys.executable, "-u", str(EPISODE), "--seed", str(seed),
-           "--out-dir", str(out_dir)]
+           "--out-dir", str(out_dir), "--scenario", scenario]
     if template:
         cmd += ["--template", template]
-    log = out_dir / f"seed{seed}.log"
+    log = out_dir / f"{stem(seed, scenario)}.log"
     print(f"[{time.strftime('%H:%M:%S')}] seed {seed} attempt {attempt} -> {log.name}",
           flush=True)
     with log.open("w") as fh:
@@ -45,6 +51,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", required=True, help="comma-separated, e.g. 2,3,4,5,6")
     ap.add_argument("--template", default=None)
+    ap.add_argument("--scenario", default="baseline")
     ap.add_argument("--out-dir", default=str(ROOT / "results" / "rq2_llm_v4"))
     ap.add_argument("--cooldown", type=float, default=90.0,
                     help="seconds to let the rate-limit window drain between "
@@ -58,19 +65,19 @@ def main() -> int:
     done, failed = [], []
 
     for seed in seeds:
-        result = out_dir / f"seed{seed}.json"
+        result = out_dir / f"{stem(seed, args.scenario)}.json"
         if result.exists() and not json.loads(result.read_text()).get("aborted", True):
             print(f"seed {seed}: already complete, skipping", flush=True)
             done.append(seed)
             continue
-        ok = run_seed(seed, args.template, out_dir, 1)
+        ok = run_seed(seed, args.template, out_dir, 1, args.scenario)
         if not ok:
             # let the rate-limit window drain before retrying; retrying in the
             # same second just reproduces the same 429
             print(f"    seed {seed} failed; waiting {args.cooldown}s before retry",
                   flush=True)
             time.sleep(args.cooldown)
-            ok = run_seed(seed, args.template, out_dir, 2)
+            ok = run_seed(seed, args.template, out_dir, 2, args.scenario)
         (done if ok else failed).append(seed)
         # and drain it again before the next episode's rate-limit probe
         if seed != seeds[-1]:
@@ -82,7 +89,7 @@ def main() -> int:
     print("=" * 62)
     rows = []
     for seed in done:
-        r = json.loads((out_dir / f"seed{seed}.json").read_text())
+        r = json.loads((out_dir / f"{stem(seed, args.scenario)}.json").read_text())
         if r.get("aborted") or r.get("pct_of_oracle") is None:
             failed.append(seed)
             continue
