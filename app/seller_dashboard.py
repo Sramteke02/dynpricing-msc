@@ -164,35 +164,55 @@ def demand_words(season_factor: float) -> tuple[str, str]:
 
 def why_this_price(cfg: EnvConfig, a: float, p_star: float, season_factor: float,
                    competitor_mean: float) -> str:
-    level, where = demand_words(season_factor)
+    """Two short sentences. The price and the profit are already on screen as
+    metrics, so this gives the reason and the consequence, not a restatement."""
+    level, _ = demand_words(season_factor)
     units = units_at(cfg, a, p_star)
-    profit = profit_at(cfg, a, p_star)
-    versus = ("higher than" if p_star > competitor_mean * 1.02 else
-              "lower than" if p_star < competitor_mean * 0.98 else "about the "
-              "same as")
+    versus = ("above" if p_star > competitor_mean * 1.02 else
+              "below" if p_star < competitor_mean * 0.98 else "level with")
     if season_factor > 1.05:
-        direction = (f"Because trade is {level}, shoppers will still buy even at "
-                     "a higher price, so you can charge more before sales start "
-                     "to fall away.")
+        reason = (f"Trade is **{level}**, so shoppers will pay more before "
+                  "sales start to drop away.")
     elif season_factor < 0.95:
-        direction = (f"Because trade is {level}, putting the price up costs you "
-                     "more in lost sales than it gains you per item, so a lower "
-                     "price earns more overall.")
+        reason = (f"Trade is **{level}**, so a higher price would lose you "
+                  "more in sales than it gains you per item.")
     else:
-        direction = ("Trade is about average, so the best price sits close to "
-                     "the middle of what shoppers will accept — high enough to "
-                     "make a decent profit per item, low enough to keep the "
-                     "sales coming.")
-    return (
-        f"Right now the market is **{level}** — {where}. {direction}\n\n"
-        f"The best price is **{p_star:.2f}**, which is **{versus}** the "
-        f"{competitor_mean:.2f} other sellers are charging. At that price you "
-        f"would sell about **{units:.0f} units**, making "
-        f"{p_star - cfg.unit_cost:.2f} profit on each one — around "
-        f"**{profit:,.0f} in total each period**.\n\n"
-        f"Charge more or less and you earn less. The chart below shows this: "
-        f"it peaks exactly at {p_star:.2f}."
-    )
+        reason = ("Trade is **about average**, so the best price sits in the "
+                  "middle — enough profit per item, without losing customers.")
+    return (f"{reason}\n\nThat is **{versus}** the {competitor_mean:.2f} other "
+            f"sellers charge, and would sell you about **{units:.0f} units** "
+            "each period. Any other price earns less.")
+
+
+def summarise_moves(path: list[float]) -> str:
+    """One plain sentence describing what a method did, from its price path.
+
+    Written from the prices themselves, so it carries none of the model's own
+    jargon (pacing, periods remaining, margin).
+    """
+    start, final = path[0], path[-1]
+    ups = sum(1 for i in range(1, len(path)) if path[i] > path[i - 1] + 1e-9)
+    downs = sum(1 for i in range(1, len(path)) if path[i] < path[i - 1] - 1e-9)
+    peak, dip = max(path), min(path)
+
+    if ups + downs == 0:
+        return f"It left the price alone, staying at **{final:.2f}**."
+    if abs(final - start) < 0.02:
+        moved = "tried the price both ways but came back to where it started"
+    elif final > start:
+        moved = "raised the price"
+        if downs and dip < start - 0.02:
+            moved = "dropped the price at first, then raised it"
+        elif downs:
+            moved = "raised the price, easing back once or twice on the way"
+    else:
+        moved = "lowered the price"
+        if ups and peak > start + 0.02:
+            moved = "pushed the price up at first, then brought it back down"
+        elif ups:
+            moved = "lowered the price, nudging it up once or twice on the way"
+    return (f"It {moved}, settling at **{final:.2f}** "
+            f"after {ups + downs} change{'s' if ups + downs != 1 else ''}.")
 
 
 # -- UI --------------------------------------------------------------------
@@ -292,9 +312,7 @@ def main() -> None:
     label = alt.Chart(peak).mark_text(dy=-14, fontSize=13, color="#0b0b0b").encode(
         x="price:Q", y="profit:Q", text=alt.Text("price:Q", format=".2f"))
     st.altair_chart(line + mark + label, width="stretch")
-    st.caption("The high point of this curve is the best price. Charge less "
-               "and you give away profit on every sale; charge more and you "
-               "lose more customers than the extra profit is worth.")
+    st.caption("The high point of the curve is the best price.")
 
     results: list[dict] = []
     start_price = float(competitor_mean)   # you currently match the market
@@ -328,9 +346,10 @@ def main() -> None:
             with c1:
                 st.metric("The AI would charge", f"{final:.2f}",
                           delta=f"{final - start_price:+.2f} vs {start_price:.2f} today")
-                st.caption(f"Took {time.time() - t0:.0f}s to think it through.")
             with c2:
-                st.markdown("**In its own words, step by step:**")
+                st.markdown(summarise_moves(path))
+                st.caption(f"Took {time.time() - t0:.0f}s to think it through.")
+            with st.expander("See the AI's full reasoning"):
                 for i, note in enumerate(notes, 1):
                     if note:
                         st.markdown(f"*Change {i} → {path[i]:.2f}:* {note}")
@@ -354,14 +373,9 @@ def main() -> None:
         st.metric("The model would charge", f"{gpath[-1]:.2f}",
                   delta=f"{gpath[-1] - start_price:+.2f} vs {start_price:.2f} today")
     with g2:
-        st.markdown(
-            "In our testing this was usually the closest to the best price "
-            "(99% of the most profit possible) — but it **cannot tell you "
-            "why**. It works out a number from past sales and gives you only "
-            "that number.\n\n"
-            "It learned from *normal* trading conditions, so in an unusually "
-            "busy or quiet period it is working outside what it has seen before."
-        )
+        st.markdown(summarise_moves(gpath))
+        st.caption("Usually the closest to the best price in our testing — but "
+                   "it **cannot tell you why**. It only gives you a number.")
     results.append({"method": "Trained pricing model", "price": gpath[-1]})
 
     # ---------------- panel 4: how close did each get ----------------
@@ -416,25 +430,35 @@ def main() -> None:
                        f"({scored[0]['pct']:.1f}% vs {scored[1]['pct']:.1f}%). ")
     gap = max((100 - r["pct"] for r in scored), default=0.0)
     reach = start_price * (1.05 ** periods)
-    st.caption(
-        verdict +
-        "The trained model is usually closest to the best price; the AI "
-        "explains its thinking in plain words but tends to move too little "
-        "when the market is very quiet or very busy — try those settings and "
-        f"compare. Each was given **{periods} chances** to adjust, and a price "
-        f"can only move about 5% at a time, so starting from {start_price:.2f} "
-        f"the highest it could reach is {min(reach, cfg.price_max):.2f}"
-        + (f" — less than the best price of {p_star:.2f}. That limits how close "
-           "anything can get here; give them more chances to adjust."
-           if reach < p_star - 0.01 else ".")
-        + (f" The best of them still left {gap:.1f}% of the possible profit "
-           "on the table." if gap > 0.5 else "")
-    )
-    st.caption(
-        "Small print: the trained model is a gradient-boosting "
-        "predict-then-optimise agent (`gbm_uniform`); the AI explanation comes "
-        "from a large language model. Both are described in the project README."
-    )
+    # the honest verdict stays in the main text; the mechanics move out of the way
+    st.markdown(verdict.strip() or
+                "The trained model is usually closest to the best price; the AI "
+                "explains its thinking but tends to move too little when the "
+                "market is very quiet or very busy.")
+    if gap > 0.5:
+        st.caption(f"Even the best of them left {gap:.1f}% of the possible "
+                   "profit on the table.")
+
+    with st.expander("Why can't they always reach the best price?"):
+        st.markdown(
+            f"A price can only move about 5% at a time, and each method was "
+            f"given **{periods} chances** to adjust. Starting from "
+            f"{start_price:.2f}, the highest it could reach is "
+            f"**{min(reach, cfg.price_max):.2f}**"
+            + (f" — less than the best price of {p_star:.2f}, so nothing can "
+               "get all the way there in this setting. Give them more chances "
+               "to adjust and they get closer."
+               if reach < p_star - 0.01 else
+               ", so there was room to reach the best price. Any shortfall is "
+               "the method's own judgement, not a lack of room.")
+            + "\n\nTry the busiest and quietest settings to see where each one "
+              "struggles."
+        )
+        st.caption(
+            "The trained model is a gradient-boosting predict-then-optimise "
+            "agent (`gbm_uniform`); the AI explanation comes from a large "
+            "language model. Both are described in the project README."
+        )
 
 
 if __name__ == "__main__":
