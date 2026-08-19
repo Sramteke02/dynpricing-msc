@@ -387,8 +387,8 @@ def _profit_chart(st, alt, cfg, a, marked: float | None) -> None:
     """Profit at each price, with the suggested price marked if we have one."""
     curve = profit_curve(cfg, a)
     chart = alt.Chart(curve).mark_line(strokeWidth=2, color="#2a78d6").encode(
-        x=alt.X("price:Q", title="the price you charge"),
-        y=alt.Y("profit:Q", title="profit you make each period"),
+        x=alt.X("price:Q", title="Price"),
+        y=alt.Y("profit:Q", title="Profit"),
         tooltip=[alt.Tooltip("price:Q", format=".2f"),
                  alt.Tooltip("profit:Q", format=",.0f")])
     if marked is not None:
