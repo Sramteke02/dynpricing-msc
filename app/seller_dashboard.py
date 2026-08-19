@@ -297,9 +297,6 @@ def main() -> None:
             "How far into the season are you?", 0, 364, 120,
             format="Day %d of 365",
             help="Affects how long you have left to sell your stock.")
-        st.caption(f"About {max(1, round(day / 30.4)):.0f} months in, "
-                   f"{365 - day} days left to sell.")
-
         go = st.button("Suggest a price", type="primary", width="stretch")
         if not have_key:
             st.divider()
@@ -363,8 +360,7 @@ def main() -> None:
     st.header("Suggested price")
     c1, c2 = st.columns([1, 1.6])
     with c1:
-        st.metric("Suggested price", f"{final:.2f}",
-                  delta=f"{final - start_price:+.2f} vs {start_price:.2f} now")
+        st.metric("Suggested price", f"{final:.2f}")
     with c2:
         st.markdown("**Why this price**")
         st.markdown(explain_price(cfg, a, final, competitor_mean, season_factor))
