@@ -1,0 +1,11 @@
+# Streamlit UI chrome for this project's dashboards.
+#
+# toolbarMode = "minimal" hides the top-right toolbar — the "Deploy" button and
+# the three-dot developer menu (Rerun / Clear cache / Record screen / theme).
+# These are development affordances; a seller opening the price explainer should
+# see only the app.
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

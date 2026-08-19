@@ -301,11 +301,9 @@ def main() -> None:
                    f"{365 - day} days left to sell.")
 
         go = st.button("Suggest a price", type="primary", width="stretch")
-        st.divider()
-        if have_key:
-            st.caption("AI explanation: connected and ready.")
-        else:
-            st.caption("AI explanation: **set MISTRAL_API_KEY** to enable.")
+        if not have_key:
+            st.divider()
+            st.caption("**Set MISTRAL_API_KEY** to enable price suggestions.")
 
     # demand level -> seasonal factor, using the strong-seasonality amplitude so
     # the slider spans a market that really does move
