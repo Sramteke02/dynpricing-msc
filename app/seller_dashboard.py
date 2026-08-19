@@ -288,7 +288,10 @@ def main() -> None:
 
         inventory = st.slider(
             "How much stock do you have left to sell?",
-            0, 60000, 24000, 1000, format="%d units")
+            0, 60000, 24000, 1000, format="%d units",
+            help="How many units you still have in stock. A big pile left "
+                 "near the end of the season is a reason to price lower and "
+                 "shift it.")
 
         day = st.slider(
             "How far into the season are you?", 0, 364, 120,
