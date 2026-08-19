@@ -335,10 +335,8 @@ def main() -> None:
         return
 
     start_price = float(competitor_mean)   # you currently match the market
-    # both live in placeholders so they can be cleared when the answer lands —
-    # otherwise the "loading" banner sits there beside the finished result
-    status = st.empty()
-    status.info("Loading…")
+    # the progress bar is the only wait indicator; it is cleared when the
+    # answer lands so it never sits beside the finished result
     prog = st.progress(0.0, text="Loading…")
     try:
         llm = LLMAgent(mode="api", template_name="default_v5",
@@ -351,10 +349,8 @@ def main() -> None:
             on_step=lambda i, n, pr: prog.progress(
                 i / n, text=f"Loading… {i} of {n}"))
         prog.empty()
-        status.empty()
     except Exception as exc:                       # never take the page down
         prog.empty()
-        status.empty()
         st.error(f"The AI could not be reached: {exc}")
         _profit_chart(st, alt, cfg, a, None)
         return
