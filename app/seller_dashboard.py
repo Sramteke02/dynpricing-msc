@@ -2,11 +2,14 @@
 
     streamlit run app/seller_dashboard.py
 
-Set the market situation in the sidebar and press "Find the best price". The
-dashboard shows the profit-maximising price for that situation, an LLM's
-reasoning in plain words, what the gbm_uniform agent does, and how close each
-gets. All seller-facing copy is deliberately jargon-free; the technical names
-appear only in the small print at the foot of the page.
+Set the market situation in the sidebar and press "Suggest a price". The
+dashboard shows ONE suggested price for that situation -- the LLM agent's --
+with its reasoning in plain words and a profit-at-each-price chart.
+
+This is the seller view: it deliberately carries no oracle, no comparison
+against other agents and no "best possible" figure. Those belong to the
+research tooling (`dynpricing run`, `scripts/`, `results/dashboard/index.html`).
+The honest framing here is a *suggestion with reasoning*, not an optimum.
 
 It imports the project's agents, environment and demand model and calls them —
 it modifies nothing. The Mistral key is read from ``.env`` (or the environment)
@@ -28,16 +31,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from dynpricing.env.config import EnvConfig
-from dynpricing.env.market_env import ACTIONS, MarketEnv, MarketState
-from dynpricing.agents.registry import build_agent
+from dynpricing.env.market_env import ACTIONS, MarketState
 from dynpricing.agents.llm_agent import LLMAgent
 
 CONFIG_PATH = ROOT / "configs" / "calibrated.json"
 ENV_FILE = ROOT / ".env"
-#: how many selling periods each method gets to adjust its price. One ±5% move
-#: cannot cross the band, so a single-step comparison would measure the action
-#: set rather than the method. 8 gives enough room to reach the optimum across
-#: the whole demand range, so the dashboard opens on a working example.
+#: how many small steps the agent may take to reach its price. A move is capped
+#: at ±5%, so one step cannot cross the band; 8 gives it room across the whole
+#: demand range. Fixed rather than exposed -- a seller should not have to reason
+#: about the action set.
 DEFAULT_ADJUST_CHANCES = 8
 
 #: plain-language demand levels -> the same 0-100 scale the maths already used.
@@ -162,26 +164,6 @@ def demand_words(season_factor: float) -> tuple[str, str]:
     return "very quiet", "one of the quietest times of the year"
 
 
-def why_this_price(cfg: EnvConfig, a: float, p_star: float, season_factor: float,
-                   competitor_mean: float) -> str:
-    """Two short sentences. The price and the profit are already on screen as
-    metrics, so this gives the reason and the consequence, not a restatement."""
-    level, _ = demand_words(season_factor)
-    units = units_at(cfg, a, p_star)
-    versus = ("above" if p_star > competitor_mean * 1.02 else
-              "below" if p_star < competitor_mean * 0.98 else "level with")
-    if season_factor > 1.05:
-        reason = (f"Trade is **{level}**, so shoppers will pay more before "
-                  "sales start to drop away.")
-    elif season_factor < 0.95:
-        reason = (f"Trade is **{level}**, so a higher price would lose you "
-                  "more in sales than it gains you per item.")
-    else:
-        reason = ("Trade is **about average**, so the best price sits in the "
-                  "middle — enough profit per item, without losing customers.")
-    return (f"{reason}\n\nThat is **{versus}** the {competitor_mean:.2f} other "
-            f"sellers charge, and would sell you about **{units:.0f} units** "
-            "each period. Any other price earns less.")
 
 
 def summarise_moves(path: list[float]) -> str:
@@ -225,8 +207,8 @@ def main() -> None:
     have_key = load_env_key()
 
     st.title("What price should I charge?")
-    st.markdown("#### Set your situation on the left, then see the best price "
-                "to charge and why.")
+    st.markdown("#### Set your situation on the left, then get a suggested "
+                "price and the reasoning behind it.")
 
     with st.sidebar:
         st.header("Your situation")
@@ -253,14 +235,7 @@ def main() -> None:
         st.caption(f"About {max(1, round(day / 30.4)):.0f} months in, "
                    f"{365 - day} days left to sell.")
 
-        periods = st.slider(
-            "How many chances to adjust the price before we compare?",
-            1, 12, DEFAULT_ADJUST_CHANCES,
-            help="Prices move in small steps (up to 5% at a time), so more "
-                 "chances means more room to reach the best price. With too "
-                 "few, a method may simply run out of room.")
-
-        go = st.button("Find the best price", type="primary", width="stretch")
+        go = st.button("Suggest a price", type="primary", width="stretch")
         st.divider()
         if have_key:
             st.caption("AI explanation: connected and ready.")
@@ -279,9 +254,11 @@ def main() -> None:
     p_star = optimal_price(cfg, a)
     best_profit = profit_at(cfg, a, p_star)
 
+    periods = DEFAULT_ADJUST_CHANCES   # prices move in small steps; fixed here
+
     if not go:
         st.info("Set your situation on the left, then press "
-                "**Find the best price**.")
+                "**Suggest a price**.")
         return
     if best_profit <= 0:
         st.error("Trade is so quiet that no price makes a profit here — every "
@@ -289,176 +266,89 @@ def main() -> None:
                  "you. Try a busier setting.")
         return
 
-    # ---------------- panel 1: the recommendation ----------------
-    st.header("Your recommended price")
-    left, right = st.columns([1, 1.4])
-    with left:
-        st.metric("Charge this", f"{p_star:.2f}")
-        st.metric("You would earn each period", f"{best_profit:,.0f}")
-        st.caption(f"Each unit costs you {cfg.unit_cost:.2f} to buy. "
-                   f"Other sellers are charging about {competitor_mean:.2f}.")
-    with right:
-        st.markdown(why_this_price(cfg, a, p_star, season_factor, competitor_mean))
+    # ---------------- the suggested price ----------------
+    if not have_key:
+        st.warning("**Set MISTRAL_API_KEY** to get a suggested price. Create a "
+                   "`.env` file containing `MISTRAL_API_KEY=...` (it is "
+                   "git-ignored), then reload.")
+        _profit_chart(st, alt, cfg, a, None)
+        return
 
+    start_price = float(competitor_mean)   # you currently match the market
+    st.info("Thinking about your situation… this takes about a minute.",
+            icon="⏳")
+    prog = st.progress(0.0, text="Thinking…")
+    try:
+        llm = LLMAgent(mode="api", template_name="default_v5",
+                       strict_llm=False, min_call_interval=8.0,
+                       max_retries=3, backoff_base=2.0, cache=False)
+        t0 = time.time()
+        path, notes = settle(
+            llm, cfg, start_price, a, competitor_mean, inventory, day, season,
+            periods,
+            on_step=lambda i, n, pr: prog.progress(
+                i / n, text=f"Thinking… step {i} of {n}"))
+        prog.empty()
+    except Exception as exc:                       # never take the page down
+        prog.empty()
+        st.error(f"The AI could not be reached: {exc}")
+        _profit_chart(st, alt, cfg, a, None)
+        return
+
+    final = path[-1]
+    level, where = demand_words(season_factor)
+
+    st.header("Suggested price")
+    c1, c2 = st.columns([1, 1.6])
+    with c1:
+        st.metric("Suggested price", f"{final:.2f}",
+                  delta=f"{final - start_price:+.2f} vs {start_price:.2f} now")
+    with c2:
+        st.markdown(f"**Why:** {summarise_moves(path)}")
+        st.caption(f"Trade is {level} — {where}. Other sellers are around "
+                   f"{competitor_mean:.2f}.")
+
+    fell_back = [d for d in llm.log if d.used_fallback]
+    if fell_back:
+        st.warning(f"The AI could not be reached for {len(fell_back)} of "
+                   f"{periods} steps, so part of this was worked out without "
+                   f"it. Reason: {fell_back[0].fallback_reason}")
+
+    with st.expander("See the AI's full reasoning"):
+        for i, note in enumerate(notes, 1):
+            if note:
+                st.markdown(f"*Step {i} → {path[i]:.2f}:* {note}")
+        st.caption(f"Took {time.time() - t0:.0f}s. The price moves in small "
+                   "steps, up to 5% at a time.")
+
+    _profit_chart(st, alt, cfg, a, final)
+
+    st.caption("This is a suggested price with reasoning, not a guaranteed "
+               "optimum.")
+
+
+def _profit_chart(st, alt, cfg, a, marked: float | None) -> None:
+    """Profit at each price, with the suggested price marked if we have one."""
     curve = profit_curve(cfg, a)
-    peak = pd.DataFrame({"price": [p_star], "profit": [best_profit]})
-    line = alt.Chart(curve).mark_line(strokeWidth=2, color="#2a78d6").encode(
+    chart = alt.Chart(curve).mark_line(strokeWidth=2, color="#2a78d6").encode(
         x=alt.X("price:Q", title="the price you charge"),
         y=alt.Y("profit:Q", title="profit you make each period"),
         tooltip=[alt.Tooltip("price:Q", format=".2f"),
                  alt.Tooltip("profit:Q", format=",.0f")])
-    mark = alt.Chart(peak).mark_point(size=140, filled=True, color="#2a78d6").encode(
-        x="price:Q", y="profit:Q")
-    label = alt.Chart(peak).mark_text(dy=-14, fontSize=13, color="#0b0b0b").encode(
-        x="price:Q", y="profit:Q", text=alt.Text("price:Q", format=".2f"))
-    st.altair_chart(line + mark + label, width="stretch")
-    st.caption("The high point of the curve is the best price.")
-
-    results: list[dict] = []
-    start_price = float(competitor_mean)   # you currently match the market
-
-    # ---------------- panel 2: the LLM ----------------
-    st.subheader("Why this price? (an AI explains in plain words)")
-    if not have_key:
-        st.warning("**Set MISTRAL_API_KEY** to enable this panel. Create a "
-                   "`.env` file containing `MISTRAL_API_KEY=...` (it is "
-                   "git-ignored), then reload. Everything else works without it.")
-    else:
-        prog = st.progress(0.0, text="asking the AI…")
-        try:
-            llm = LLMAgent(mode="api", template_name="default_v5",
-                           strict_llm=False, min_call_interval=8.0,
-                           max_retries=3, backoff_base=2.0, cache=False)
-            t0 = time.time()
-            path, notes = settle(
-                llm, cfg, start_price, a, competitor_mean, inventory, day, season,
-                periods,
-                on_step=lambda i, n, p: prog.progress(
-                    i / n, text=f"change {i} of {n} — price now {p:.2f}"))
-            prog.empty()
-            final = path[-1]
-            fell_back = [d for d in llm.log if d.used_fallback]
-            if fell_back:
-                st.error("The AI could not be reached for "
-                         f"{len(fell_back)} of {periods} changes. Reason: "
-                         f"{fell_back[0].fallback_reason}")
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                st.metric("The AI would charge", f"{final:.2f}",
-                          delta=f"{final - start_price:+.2f} vs {start_price:.2f} today")
-            with c2:
-                st.markdown(summarise_moves(path))
-                st.caption(f"Took {time.time() - t0:.0f}s to think it through.")
-            with st.expander("See the AI's full reasoning"):
-                for i, note in enumerate(notes, 1):
-                    if note:
-                        st.markdown(f"*Change {i} → {path[i]:.2f}:* {note}")
-            results.append({"method": "AI suggestion", "price": final})
-        except Exception as exc:                      # never take the page down
-            prog.empty()
-            st.error(f"The AI could not be reached: {exc}")
-
-    # ---------------- panel 3: gbm_uniform ----------------
-    st.subheader("What a trained pricing model suggests")
-    with st.spinner("checking the trained model…"):
-        gbm = st.session_state.get("_gbm")
-        if gbm is None:
-            gbm = build_agent("gbm_uniform", cfg, seed=0)
-            gbm.train(make_env=lambda: MarketEnv(cfg), seed=0)
-            st.session_state["_gbm"] = gbm
-        gpath, _ = settle(gbm, cfg, start_price, a, competitor_mean, inventory,
-                          day, season, periods)
-    g1, g2 = st.columns([1, 2])
-    with g1:
-        st.metric("The model would charge", f"{gpath[-1]:.2f}",
-                  delta=f"{gpath[-1] - start_price:+.2f} vs {start_price:.2f} today")
-    with g2:
-        st.markdown(summarise_moves(gpath))
-        st.caption("Usually the closest to the best price in our testing — but "
-                   "it **cannot tell you why**. It only gives you a number.")
-    results.append({"method": "Trained pricing model", "price": gpath[-1]})
-
-    # ---------------- panel 4: how close did each get ----------------
-    st.subheader("How close did each get?")
-    st.markdown("**Higher = closer to the most profit possible.**")
-    rows = [{"method": "Best possible", "price": p_star, "pct": 100.0}]
-    for r in results:
-        rows.append({"method": r["method"], "price": r["price"],
-                     "pct": 100 * profit_at(cfg, a, r["price"]) / best_profit})
-    df = pd.DataFrame(rows)
-    bars = alt.Chart(df).mark_bar(size=26, cornerRadiusEnd=4,
-                                  color="#2a78d6").encode(
-        y=alt.Y("method:N", sort=list(df.method), title=None),
-        x=alt.X("pct:Q", title="share of the most profit possible (%)",
-                scale=alt.Scale(domain=[0, 105])),
-        tooltip=[alt.Tooltip("method:N"), alt.Tooltip("price:Q", format=".2f"),
-                 alt.Tooltip("pct:Q", format=".1f")])
-    text = alt.Chart(df).mark_text(align="left", dx=6).encode(
-        y=alt.Y("method:N", sort=list(df.method)), x="pct:Q",
-        text=alt.Text("pct:Q", format=".1f"))
-    st.altair_chart(bars + text, width="stretch")
-    st.dataframe(
-        df.rename(columns={"method": "Method", "price": "Price it charges",
-                           "pct": "Share of the most profit possible (%)"}),
-        hide_index=True, width="stretch",
-        column_config={
-            "Price it charges": st.column_config.NumberColumn(format="%.2f"),
-            "Share of the most profit possible (%)":
-                st.column_config.NumberColumn(format="%.1f")})
-    # the honest line is computed from what actually happened, not asserted
-    scored = [r for r in rows if r["method"] != "Best possible"]
-    choke = a / cfg.b          # above this price nothing sells at all
-    verdict = ""
-    if scored:
-        scored.sort(key=lambda r: -r["pct"])
-        dead = [r for r in scored if r["pct"] < 0.5]
-        if len(dead) == len(scored):
-            verdict = (
-                f"⚠️ **Neither method found a workable price here.** At this "
-                f"demand level nobody buys above **{choke:.2f}**, and both "
-                f"priced above it — so both would sell nothing and earn nothing, "
-                f"while {p_star:.2f} would have earned {best_profit:,.0f}. ")
-        elif dead:
-            verdict = (f"⚠️ **{dead[0]['method']}** priced above {choke:.2f}, "
-                       "where nothing sells at this demand level, so it earns "
-                       "nothing. ")
-        elif len(scored) >= 2 and abs(scored[0]["price"] - scored[1]["price"]) < 0.01:
-            verdict = ("In this situation both methods landed on the same price, "
-                       "so neither is closer. ")
-        elif len(scored) >= 2:
-            verdict = (f"In this situation **{scored[0]['method']}** got closer "
-                       f"({scored[0]['pct']:.1f}% vs {scored[1]['pct']:.1f}%). ")
-    gap = max((100 - r["pct"] for r in scored), default=0.0)
-    reach = start_price * (1.05 ** periods)
-    # the honest verdict stays in the main text; the mechanics move out of the way
-    st.markdown(verdict.strip() or
-                "The trained model is usually closest to the best price; the AI "
-                "explains its thinking but tends to move too little when the "
-                "market is very quiet or very busy.")
-    if gap > 0.5:
-        st.caption(f"Even the best of them left {gap:.1f}% of the possible "
-                   "profit on the table.")
-
-    with st.expander("Why can't they always reach the best price?"):
-        st.markdown(
-            f"A price can only move about 5% at a time, and each method was "
-            f"given **{periods} chances** to adjust. Starting from "
-            f"{start_price:.2f}, the highest it could reach is "
-            f"**{min(reach, cfg.price_max):.2f}**"
-            + (f" — less than the best price of {p_star:.2f}, so nothing can "
-               "get all the way there in this setting. Give them more chances "
-               "to adjust and they get closer."
-               if reach < p_star - 0.01 else
-               ", so there was room to reach the best price. Any shortfall is "
-               "the method's own judgement, not a lack of room.")
-            + "\n\nTry the busiest and quietest settings to see where each one "
-              "struggles."
-        )
-        st.caption(
-            "The trained model is a gradient-boosting predict-then-optimise "
-            "agent (`gbm_uniform`); the AI explanation comes from a large "
-            "language model. Both are described in the project README."
-        )
+    if marked is not None:
+        here = pd.DataFrame({"price": [marked],
+                             "profit": [profit_at(cfg, a, marked)]})
+        chart = (chart
+                 + alt.Chart(here).mark_point(size=150, filled=True,
+                                              color="#eb6834").encode(
+                     x="price:Q", y="profit:Q")
+                 + alt.Chart(here).mark_text(dy=-14, fontSize=13).encode(
+                     x="price:Q", y="profit:Q",
+                     text=alt.Text("price:Q", format=".2f")))
+    st.altair_chart(chart, width="stretch")
+    st.caption("What you would earn at each price. The dot is the suggested "
+               "price." if marked is not None else
+               "What you would earn at each price.")
 
 
 if __name__ == "__main__":
