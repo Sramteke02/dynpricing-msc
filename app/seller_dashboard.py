@@ -323,9 +323,6 @@ def main() -> None:
 
     _profit_chart(st, alt, cfg, a, final)
 
-    st.caption("This is a suggested price with reasoning, not a guaranteed "
-               "optimum.")
-
 
 def _profit_chart(st, alt, cfg, a, marked: float | None) -> None:
     """Profit at each price, with the suggested price marked if we have one."""
