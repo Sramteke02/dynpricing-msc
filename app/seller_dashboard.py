@@ -192,7 +192,7 @@ def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float
     else:
         near = "a little above" if gap < 8 else "well above"
         vs = (f"At **{price:.2f}** you are {near} the {competitor_mean:.2f} other "
-              f"sellers charge — you make {per_sale:.2f} on each sale, but some "
+              f"sellers charge, so you make {per_sale:.2f} on each sale, but some "
               "shoppers will look elsewhere.")
 
     # 2. why it suits current trade
@@ -204,7 +204,7 @@ def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float
                "keeps customers buying.")
     else:
         fit = ("Trade is normal right now, so a price near the middle works "
-               "best — enough profit on each sale, without putting customers "
+               "best: enough profit on each sale, without putting customers "
                "off.")
 
     # 3. what it earns
@@ -213,7 +213,7 @@ def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float
     # 4. either side of it, from the real curve
     up, down = profit_at(cfg, a, price * 1.1), profit_at(cfg, a, price * 0.9)
     if up <= profit and down <= profit:
-        either = (f"Charge much more or much less and you earn less — about "
+        either = (f"Charge much more or much less and you earn less: about "
                   f"{up:,.0f} if you added 10%, about {down:,.0f} if you took "
                   "10% off.")
     elif up > profit:
@@ -297,7 +297,7 @@ def main() -> None:
             "How far into the season are you?", 0, 364, 120,
             format="Day %d of 365",
             help="Affects how long you have left to sell your stock.")
-        go = st.button("Suggest a price", type="primary", width="stretch")
+        go = st.button("Suggest a price")
         if not have_key:
             st.divider()
             st.caption("**Set MISTRAL_API_KEY** to enable price suggestions.")
@@ -321,7 +321,7 @@ def main() -> None:
                 "**Suggest a price**.")
         return
     if best_profit <= 0:
-        st.error("Trade is so quiet that no price makes a profit here — every "
+        st.error("Trade is so quiet that no price makes a profit here. Every "
                  "price shoppers would accept is below what the stock costs "
                  "you. Try a busier setting.")
         return
@@ -364,7 +364,8 @@ def main() -> None:
     st.header("Suggested price")
     c1, c2 = st.columns([1, 1.6])
     with c1:
-        st.metric("Suggested price", f"{final:.2f}")
+        st.metric("Suggested price", f"{final:.2f}",
+                  label_visibility="collapsed")
     with c2:
         st.markdown("**Why this price**")
         st.markdown(explain_price(cfg, a, final, competitor_mean, season_factor))
