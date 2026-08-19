@@ -275,8 +275,8 @@ def main() -> None:
         </style>""",
         unsafe_allow_html=True)
 
-    st.title("What price should I charge?")
-    st.markdown("#### Set your situation on the left, then get a suggested "
+    st.markdown("### What price should I charge?")
+    st.markdown("### Set your situation on the left, then get a suggested "
                 "price and the reasoning behind it.")
 
     with st.sidebar:
@@ -362,7 +362,7 @@ def main() -> None:
 
     final = path[-1]
 
-    st.header("Suggested price")
+    st.markdown("### Suggested price")
     c1, c2 = st.columns([1, 1.6])
     with c1:
         st.metric("Suggested price", f"{final:.2f}",
