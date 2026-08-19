@@ -166,6 +166,68 @@ def demand_words(season_factor: float) -> tuple[str, str]:
 
 
 
+def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float,
+                  season_factor: float) -> str:
+    """Justify the suggested price for THIS situation, from the actual numbers.
+
+    Four short sentences: where the price sits against the competition, why it
+    suits current trade, what it earns, and what happens either side of it.
+    Every figure is computed, so the paragraph is always true of what is on
+    screen.
+    """
+    profit = profit_at(cfg, a, price)
+    per_sale = price - cfg.unit_cost
+    gap = (price / competitor_mean - 1.0) * 100 if competitor_mean > 0 else 0.0
+
+    # 1. against the competition
+    if abs(gap) < 2:
+        vs = (f"At **{price:.2f}** you are in line with the {competitor_mean:.2f} "
+              f"other sellers charge, so you stay competitive and still make "
+              f"{per_sale:.2f} on each sale.")
+    elif gap < 0:
+        near = "just below" if gap > -8 else "well below"
+        vs = (f"At **{price:.2f}** you are {near} the {competitor_mean:.2f} other "
+              f"sellers charge, so you stay competitive while still making "
+              f"{per_sale:.2f} on each sale.")
+    else:
+        near = "a little above" if gap < 8 else "well above"
+        vs = (f"At **{price:.2f}** you are {near} the {competitor_mean:.2f} other "
+              f"sellers charge — you make {per_sale:.2f} on each sale, but some "
+              "shoppers will look elsewhere.")
+
+    # 2. why it suits current trade
+    if season_factor > 1.05:
+        fit = ("Trade is busy right now, so shoppers will pay a bit more before "
+               "sales start to slip.")
+    elif season_factor < 0.95:
+        fit = ("Trade is quiet right now, so keeping the price down is what "
+               "keeps customers buying.")
+    else:
+        fit = ("Trade is normal right now, so a price near the middle works "
+               "best — enough profit on each sale, without putting customers "
+               "off.")
+
+    # 3. what it earns
+    earns = f"You would make about **{profit:,.0f} each period** at this price."
+
+    # 4. either side of it, from the real curve
+    up, down = profit_at(cfg, a, price * 1.1), profit_at(cfg, a, price * 0.9)
+    if up <= profit and down <= profit:
+        either = (f"Charge much more or much less and you earn less — about "
+                  f"{up:,.0f} if you added 10%, about {down:,.0f} if you took "
+                  "10% off.")
+    elif up > profit:
+        either = (f"You could squeeze a little more out by charging higher "
+                  f"(about {up:,.0f} at 10% more), but push too far and sales "
+                  "fall away quickly.")
+    else:
+        either = (f"A slightly lower price would earn a little more (about "
+                  f"{down:,.0f} at 10% less); go much lower and you give away "
+                  "profit on every sale.")
+
+    return f"{vs} {fit} {earns} {either}"
+
+
 def summarise_moves(path: list[float]) -> str:
     """One plain sentence describing what a method did, from its price path.
 
@@ -296,7 +358,6 @@ def main() -> None:
         return
 
     final = path[-1]
-    level, where = demand_words(season_factor)
 
     st.header("Suggested price")
     c1, c2 = st.columns([1, 1.6])
@@ -304,9 +365,8 @@ def main() -> None:
         st.metric("Suggested price", f"{final:.2f}",
                   delta=f"{final - start_price:+.2f} vs {start_price:.2f} now")
     with c2:
-        st.markdown(f"**Why:** {summarise_moves(path)}")
-        st.caption(f"Trade is {level} — {where}. Other sellers are around "
-                   f"{competitor_mean:.2f}.")
+        st.markdown("**Why this price**")
+        st.markdown(explain_price(cfg, a, final, competitor_mean, season_factor))
 
     fell_back = [d for d in llm.log if d.used_fallback]
     if fell_back:
@@ -315,6 +375,7 @@ def main() -> None:
                    f"it. Reason: {fell_back[0].fallback_reason}")
 
     with st.expander("See the AI's full reasoning"):
+        st.markdown(summarise_moves(path))
         for i, note in enumerate(notes, 1):
             if note:
                 st.markdown(f"*Step {i} → {path[i]:.2f}:* {note}")
