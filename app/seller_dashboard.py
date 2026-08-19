@@ -268,6 +268,13 @@ def main() -> None:
     cfg = EnvConfig.load(str(CONFIG_PATH))
     have_key = load_env_key()
 
+    st.markdown(
+        """<style>
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stExpandSidebarButton"] { display: none !important; }
+        </style>""",
+        unsafe_allow_html=True)
+
     st.title("What price should I charge?")
     st.markdown("#### Set your situation on the left, then get a suggested "
                 "price and the reasoning behind it.")
@@ -317,8 +324,6 @@ def main() -> None:
     periods = DEFAULT_ADJUST_CHANCES   # prices move in small steps; fixed here
 
     if not go:
-        st.info("Set your situation on the left, then press "
-                "**Suggest a price**.")
         return
     if best_profit <= 0:
         st.error("Trade is so quiet that no price makes a profit here. Every "
