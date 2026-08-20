@@ -271,7 +271,8 @@ def main() -> None:
     st.markdown(
         """<style>
         [data-testid="stSidebarCollapseButton"],
-        [data-testid="stExpandSidebarButton"] { display: none !important; }
+        [data-testid="stExpandSidebarButton"],
+        [data-testid="stElementToolbar"] { display: none !important; }
         </style>""",
         unsafe_allow_html=True)
 
@@ -407,9 +408,6 @@ def _profit_chart(st, alt, cfg, a, marked: float | None) -> None:
                      x="price:Q", y="profit:Q",
                      text=alt.Text("price:Q", format=".2f")))
     st.altair_chart(chart, width="stretch")
-    st.caption("What you would earn at each price. The dot is the suggested "
-               "price." if marked is not None else
-               "What you would earn at each price.")
 
 
 if __name__ == "__main__":
