@@ -15,6 +15,12 @@ It imports the project's agents, environment and demand model and calls them —
 it modifies nothing. The Mistral key is read from ``.env`` (or the environment)
 exactly as the other tools do; with no key the AI panel says so and every other
 panel still works.
+
+Every suggested price is the LLM's own: one API call per step, spaced to the
+account's live requests-per-minute cap (see `pacing`) so the limit is never
+hit, and ``strict_llm=True`` so a step that cannot be answered aborts the
+suggestion instead of quietly falling back to the rule-of-thumb. On a 4 req/min
+free tier that is four calls about 16s apart -- roughly a minute per suggestion.
 """
 
 from __future__ import annotations
@@ -32,15 +38,20 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from dynpricing.env.config import EnvConfig
 from dynpricing.env.market_env import ACTIONS, MarketState
-from dynpricing.agents.llm_agent import LLMAgent
+from dynpricing.agents.llm_agent import (LLMAgent, FALLBACK_RPM,
+                                         RPM_SAFETY, live_rpm_limit)
 
 CONFIG_PATH = ROOT / "configs" / "calibrated.json"
 ENV_FILE = ROOT / ".env"
 #: how many small steps the agent may take to reach its price. A move is capped
-#: at ±5%, so one step cannot cross the band; 8 gives it room across the whole
-#: demand range. Fixed rather than exposed -- a seller should not have to reason
-#: about the action set.
-DEFAULT_ADJUST_CHANCES = 8
+#: at ±5%, so one step cannot cross the band; 4 steps reach ~±21% of the
+#: starting price, which covers the gap a seller starting level with the market
+#: actually has to close. Fixed rather than exposed -- a seller should not have
+#: to reason about the action set.
+#:
+#: 4 rather than 8 because each step is one API call and the account is paced
+#: to 4 calls/minute (see `pacing`): 8 steps put a suggestion two minutes away.
+DEFAULT_ADJUST_CHANCES = 4
 
 #: the point in the season the maths runs at. Fixed rather than exposed -- "day
 #: 120 of 365" is an abstract thing to ask a seller for, and it fed the demand
@@ -67,6 +78,36 @@ def load_env_key() -> bool:
             name, value = line.split("=", 1)
             os.environ.setdefault(name.strip(), value.strip().strip("'\""))
     return bool(os.environ.get("MISTRAL_API_KEY"))
+
+
+#: last (requests/min, headers, probe start) read from the API, and how long
+#: that reading is trusted. The probe is itself a request against the very
+#: quota it measures, so it is made once an hour, not once a suggestion.
+_RPM_CACHE: dict = {}
+_RPM_TTL_S = 3600.0
+
+
+def pacing() -> tuple[float, float]:
+    """Seconds to leave between LLM calls, from the account's live cap.
+
+    The cap is read off a real response (``x-ratelimit-limit-req-minute``)
+    rather than hardcoded, so an upgraded Mistral tier speeds the dashboard up
+    on its own. Returns ``(interval, probe start time)``; the start time is fed
+    to :meth:`LLMAgent.note_external_call` so the probe's own request is paced
+    like any other.
+    """
+    now = time.perf_counter()
+    probe = _RPM_CACHE.get("probe")
+    if probe is None or now - probe[2] > _RPM_TTL_S:
+        try:
+            probe = live_rpm_limit()
+        except Exception:
+            # A failed probe says nothing about the cap, and may itself have
+            # spent requests -- assume the free tier and count it as a call.
+            probe = (FALLBACK_RPM, {}, now)
+        _RPM_CACHE["probe"] = probe
+    rpm = max(1, int(probe[0]))
+    return 60.0 / rpm * RPM_SAFETY, probe[2]
 
 
 # -- demand maths ----------------------------------------------------------
@@ -350,19 +391,32 @@ def main() -> None:
     # answer lands so it never sits beside the finished result
     prog = st.progress(0.0, text="Loading…")
     try:
+        # One call per step, spaced to the account's own requests-per-minute
+        # cap so the limit is never hit. strict_llm=True: a step that cannot
+        # be answered aborts the suggestion rather than quietly substituting
+        # the rule-of-thumb, so what the page shows is the LLM's, all of it.
+        interval, probed_at = pacing()
         llm = LLMAgent(mode="api", template_name="default_v5",
-                       strict_llm=False, min_call_interval=8.0,
-                       max_retries=3, backoff_base=2.0, cache=False)
+                       strict_llm=True, min_call_interval=interval,
+                       max_retries=4, backoff_base=8.0, backoff_cap=60.0,
+                       cache=False)
+        llm.note_external_call(probed_at)
+        eta = interval * (periods - 1) + 6 * periods
+        prog.progress(0.0, text=f"Thinking… about {round(eta / 10) * 10}s")
         t0 = time.time()
         path, notes = settle(
             llm, cfg, start_price, a, competitor_mean, inventory, day, season,
             periods,
             on_step=lambda i, n, pr: prog.progress(
-                i / n, text=f"Loading… {i} of {n}"))
+                i / n, text=f"Thinking… step {i} of {n}"))
         prog.empty()
     except Exception as exc:                       # never take the page down
         prog.empty()
-        st.error(f"The AI could not be reached: {exc}")
+        st.error("No suggested price this time: the AI did not answer every "
+                 "step, and nothing on this page is ever worked out without "
+                 "it. Give it a minute for the rate limit to clear, then press "
+                 "**Suggest a price** again.")
+        st.caption(f"Details: {exc}")
         _profit_chart(st, alt, cfg, a, None)
         return
 
@@ -376,12 +430,6 @@ def main() -> None:
     with c2:
         st.markdown("**Why this price**")
         st.markdown(explain_price(cfg, a, final, competitor_mean, season_factor))
-
-    fell_back = [d for d in llm.log if d.used_fallback]
-    if fell_back:
-        st.warning(f"The AI could not be reached for {len(fell_back)} of "
-                   f"{periods} steps, so part of this was worked out without "
-                   f"it. Reason: {fell_back[0].fallback_reason}")
 
     with st.expander("See the AI's full reasoning"):
         st.markdown(summarise_moves(path))

@@ -45,6 +45,8 @@ import json
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
@@ -243,6 +245,69 @@ DEFAULT_TEMPLATE_NAME = "default_v4"
 
 #: HTTP statuses worth retrying: rate limiting and transient server faults.
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+#: Requests-per-minute assumed when the account's real cap cannot be read.
+#: Mistral's free tier serves 4/min; assuming *less* than the truth only costs
+#: time, while assuming more costs 429s.
+FALLBACK_RPM = 4
+
+#: Pace at slightly under the advertised cap rather than exactly at it, so
+#: clock skew between our timer and the server's window cannot tip us over.
+RPM_SAFETY = 1.07
+
+
+def live_rpm_limit(model: str | None = None, provider: str = DEFAULT_PROVIDER,
+                   api_key: str | None = None, attempts: int = 6,
+                   on_wait=None) -> tuple[int, dict, float]:
+    """Read the account's requests-per-minute cap from a real response.
+
+    The cap is not in any catalogue endpoint -- ``GET /v1/models`` carries no
+    rate-limit headers -- so this sends a genuine 1-token completion and reads
+    the ``x-ratelimit-*`` headers off it. Callers that pace their own traffic
+    must count this probe: it spends one request from the same window, which is
+    what the returned start time is for (see
+    :meth:`LLMAgent.note_external_call`).
+
+    Retries on 429: run back-to-back after another episode, this probe lands in
+    a window the previous episode already saturated. Without backoff it killed a
+    whole 100-minute run before day 0. ``on_wait(seconds, attempt, attempts)``
+    is called before each such wait, for progress reporting.
+
+    Returns ``(requests per minute, rate-limit headers, probe start time)``,
+    the start time being a :func:`time.perf_counter` reading.
+    """
+    config = PROVIDERS[provider]
+    key = api_key or os.environ.get(config["env_var"])
+    if not key:
+        raise RuntimeError(
+            f"live_rpm_limit(provider={provider!r}) needs {config['env_var']} "
+            "in the environment.")
+    url = (config["base_url"] or "https://api.openai.com/v1") + "/chat/completions"
+    body = json.dumps({"model": model or config["default_model"], "max_tokens": 1,
+                       "messages": [{"role": "user", "content": "hi"}]}).encode()
+    last = None
+    for attempt in range(attempts):
+        started = time.perf_counter()
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Authorization": "Bearer " + key,
+                     "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                hdrs = dict(r.headers)
+            limit = int(hdrs.get("x-ratelimit-limit-req-minute", FALLBACK_RPM))
+            return limit, {k: v for k, v in hdrs.items()
+                           if "ratelimit" in k.lower()}, started
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code != 429 or attempt == attempts - 1:
+                raise
+            wait = min(60.0, 15.0 * (attempt + 1))
+            if on_wait:
+                on_wait(wait, attempt + 1, attempts)
+            time.sleep(wait)
+    raise last  # pragma: no cover
 
 
 class LLMFallbackError(RuntimeError):
@@ -575,6 +640,18 @@ class LLMAgent(Agent):
                 except (TypeError, ValueError):
                     continue
         return None
+
+    def note_external_call(self, started_at: float | None = None) -> None:
+        """Record a request made against the same quota outside this agent.
+
+        Pacing counts call *starts*, so a probe such as :func:`live_rpm_limit`
+        would otherwise be invisible and the agent's first call would land in
+        the same window, one request over budget. Pass the probe's start time
+        (a :func:`time.perf_counter` reading) so a probe made long ago costs
+        nothing while a fresh one delays the first call by a full interval.
+        """
+        self._last_call_started = (time.perf_counter() if started_at is None
+                                   else float(started_at))
 
     def _throttle(self) -> None:
         """Proactively space out calls so the limit is approached, not hit."""

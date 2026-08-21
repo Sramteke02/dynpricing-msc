@@ -20,11 +20,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,43 +30,12 @@ sys.path.insert(0, str(ROOT / "src"))
 from dynpricing.env.config import EnvConfig
 from dynpricing.env.market_env import MarketEnv
 from dynpricing.agents.base import Agent
-from dynpricing.agents.llm_agent import LLMAgent, LLMFallbackError
+from dynpricing.agents.llm_agent import (LLMAgent, LLMFallbackError,
+                                         RPM_SAFETY, live_rpm_limit)
 from dynpricing.eval.harness import Scenario, default_scenarios, run_episode
 
 IN_PRICE, OUT_PRICE = 0.50, 1.50   # USD / 1M tokens, Mistral Large
-SAFETY = 1.07                       # sit just under the advertised limit
 ORACLE_CACHE = ROOT / "results" / "seasonal_sweep" / "oracle_cache.json"
-
-
-def live_rpm_limit(model: str, attempts: int = 6) -> tuple[int, dict]:
-    """Read the account's requests-per-minute cap from a real response.
-
-    Retries on 429: run back-to-back after another episode, this probe lands in
-    a window the previous episode already saturated. Without backoff it killed a
-    whole 100-minute run before day 0.
-    """
-    body = json.dumps({"model": model, "max_tokens": 1,
-                       "messages": [{"role": "user", "content": "hi"}]}).encode()
-    last = None
-    for attempt in range(attempts):
-        req = urllib.request.Request(
-            "https://api.mistral.ai/v1/chat/completions", data=body,
-            headers={"Authorization": "Bearer " + os.environ["MISTRAL_API_KEY"],
-                     "Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=60) as r:
-                hdrs = dict(r.headers)
-            return int(hdrs.get("x-ratelimit-limit-req-minute", 4)), \
-                {k: v for k, v in hdrs.items() if "ratelimit" in k.lower()}
-        except urllib.error.HTTPError as exc:
-            last = exc
-            if exc.code != 429 or attempt == attempts - 1:
-                raise
-            wait = min(60.0, 15.0 * (attempt + 1))
-            print(f"  rate-limit probe got 429; waiting {wait:.0f}s "
-                  f"(attempt {attempt + 1}/{attempts})", flush=True)
-            time.sleep(wait)
-    raise last  # pragma: no cover
 
 
 def config_key(cfg: EnvConfig) -> str:
@@ -158,8 +124,11 @@ def main() -> int:
     kwargs = {"mode": "api", "provider": "mistral"}
     if args.template:
         kwargs["template_name"] = args.template
-    limit, hdrs = live_rpm_limit(LLMAgent(mode="heuristic").model)
-    pacing = 60.0 / limit * SAFETY
+    limit, hdrs, _ = live_rpm_limit(
+        on_wait=lambda w, i, n: print(
+            f"  rate-limit probe got 429; waiting {w:.0f}s "
+            f"(attempt {i}/{n})", flush=True))
+    pacing = 60.0 / limit * RPM_SAFETY
     print(f"rate-limit headers: {hdrs}", flush=True)
     print(f"limit {limit} req/min -> pacing {pacing:.2f}s ({60/pacing:.2f} req/min)",
           flush=True)
