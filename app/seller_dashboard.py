@@ -42,6 +42,13 @@ ENV_FILE = ROOT / ".env"
 #: about the action set.
 DEFAULT_ADJUST_CHANCES = 8
 
+#: the point in the season the maths runs at. Fixed rather than exposed -- "day
+#: 120 of 365" is an abstract thing to ask a seller for, and it fed the demand
+#: curve only through the weekday/weekend uplift (day 120 is a weekday) plus the
+#: periods-remaining count the agent sees (365 - 120 = 245, comfortably
+#: mid-season). Nothing about the calculation changes; only the widget is gone.
+DEFAULT_DAY = 120
+
 #: plain-language demand levels -> the same 0-100 scale the maths already used.
 DEMAND_LEVELS = {"Very quiet": 0, "Quiet": 25, "Normal": 50,
                  "Busy": 75, "Very busy": 100}
@@ -301,14 +308,12 @@ def main() -> None:
                  "near the end of the season is a reason to price lower and "
                  "shift it.")
 
-        day = st.slider(
-            "How far into the season are you?", 0, 364, 120,
-            format="Day %d of 365",
-            help="Affects how long you have left to sell your stock.")
         go = st.button("Suggest a price")
         if not have_key:
             st.divider()
             st.caption("**Set MISTRAL_API_KEY** to enable price suggestions.")
+
+    day = DEFAULT_DAY
 
     # demand level -> seasonal factor, using the strong-seasonality amplitude so
     # the slider spans a market that really does move
