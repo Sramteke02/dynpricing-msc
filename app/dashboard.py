@@ -36,6 +36,7 @@ from dynpricing.env.market_env import MarketEnv
 from dynpricing.agents.registry import build_agent
 from dynpricing.eval.harness import Scenario, default_scenarios, run_episode
 from dynpricing.eval.stats import bootstrap_mean_ci
+from dynpricing.agents.llm_agent import DEFAULT_PROVIDER, PROVIDERS
 
 CONFIG_PATH = ROOT / "configs" / "calibrated.json"
 ORACLE_CACHE = ROOT / "results" / "seasonal_sweep" / "oracle_cache.json"
@@ -97,8 +98,13 @@ def oracle_from_cache(cfg: EnvConfig, seeds: list[int]) -> tuple[list[dict], lis
 
 
 # -- running ---------------------------------------------------------------
+#: The key the llm agent actually reads, derived from the default provider so
+#: this can never drift from llm_agent.PROVIDERS again.
+LLM_ENV_VAR = PROVIDERS[DEFAULT_PROVIDER]["env_var"]
+
+
 def llm_available() -> bool:
-    return bool(os.environ.get("OPENAI_API_KEY"))
+    return bool(os.environ.get(LLM_ENV_VAR))
 
 
 def run_agent_seeds(agent_name: str, cfg: EnvConfig, scenario: Scenario,
@@ -241,7 +247,7 @@ def main() -> None:
             f"horizon {cfg.horizon} · band [{cfg.price_min:.3f}, "
             f"{cfg.price_max:.3f}] · inventory {cfg.init_inventory:,}")
         if not llm_available():
-            st.caption("`OPENAI_API_KEY` is not set — the llm agent will be "
+            st.caption(f"`{LLM_ENV_VAR}` is not set — the llm agent will be "
                        "skipped, not faked.")
 
     if run:
@@ -270,7 +276,7 @@ def execute_run(st, cfg: EnvConfig, scenario: Scenario, agents: list[str],
         if llm_available():
             live.append("llm")
         else:
-            skipped.append(("llm", "pending — set OPENAI_API_KEY"))
+            skipped.append(("llm", f"pending — set {LLM_ENV_VAR}"))
 
     progress = st.progress(0.0, text="starting…")
     total = max(1, len(live))

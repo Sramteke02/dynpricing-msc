@@ -31,7 +31,7 @@ pip install -e .
 dynpricing calibrate --out configs/calibrated.json
 dynpricing calibrate --allow-synthetic --out configs/calibrated.json   # no data yet
 
-# 2. Cheap LLM reliability/cost check BEFORE any full run (needs OPENAI_API_KEY;
+# 2. Cheap LLM reliability/cost check BEFORE any full run (needs MISTRAL_API_KEY;
 #    without a key it does a token-free dry render of the prompts + parser).
 dynpricing llm-smoke --steps 8
 
@@ -63,7 +63,7 @@ streamlit run app/dashboard.py
 The oracle is loaded from `results/seasonal_sweep/oracle_cache.json` when the
 scenario config fingerprint matches (it is deterministic given config and seed)
 and computed live otherwise; the page says which happened. Without
-`OPENAI_API_KEY` the `llm` agent is shown as pending and skipped — never
+`MISTRAL_API_KEY` the `llm` agent is shown as pending and skipped — never
 estimated or faked. It imports the agents, env and harness; it does not modify
 them.
 
@@ -79,7 +79,7 @@ know:
 * The GBM agents retrain per seed, which is CPU-heavy for a free Cloud instance.
   Start at 1–2 seeds there; the 5-seed default takes ~72s locally and will be
   slower on Cloud.
-* Set `OPENAI_API_KEY` under the app's **Secrets**, not in the repo.
+* Set `MISTRAL_API_KEY` under the app's **Secrets**, not in the repo.
 
 ### Regenerating the static dashboard
 
@@ -158,8 +158,12 @@ pytest -q
 
 * `xgboost` or `lightgbm` — used by the gradient-boosting agent if available,
   otherwise scikit-learn's `HistGradientBoostingRegressor` is used.
-* `openai` + `OPENAI_API_KEY` — used by the LLM agent; without a key the agent
-  falls back to a transparent heuristic so the pipeline still runs end-to-end.
+* `openai` + `MISTRAL_API_KEY` — used by the LLM agent. The `openai` package is
+  the HTTP client for both providers: Mistral's La Plateforme exposes an
+  OpenAI-compatible endpoint, and Mistral is the default provider (set
+  `OPENAI_API_KEY` instead only with `provider=openai`). Without a key the
+  agent falls back to a transparent heuristic so the pipeline still runs
+  end-to-end.
 * `wandb` — optional experiment tracking.
 
 ## Data
