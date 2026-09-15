@@ -15,6 +15,7 @@ wandb/
 *.png
 !results/*.png
 !results/archive/*.png
+!results/figures/*.png
 results/*.log
 
 # Secrets — API keys live in the environment or in one of these files, NEVER
