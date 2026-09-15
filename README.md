@@ -95,12 +95,19 @@ python scripts/build_dashboard_html.py
 
 It reads `results/metrics_aggregated.json`,
 `results/gbm_uniform/{metrics_aggregated,paired_gbm_uniform,price_paths}.json`,
-`results/gbm_uniform/diagnostics.log` and
-`results/seasonal_sweep/summary.json`. The script prints which panels it filled
-and which came out empty, so a stale or missing input is visible at build time.
-Two panels are currently empty by design: the oracle-verification KPI (run
-`dynpricing verify-oracle` and record its output under `results/`) and the RQ2
-LLM tile (needs `OPENAI_API_KEY`).
+`results/gbm_uniform/diagnostics.log`, `results/seasonal_sweep/summary.json` and
+the per-episode LLM runs under `results/rq2_llm*/seed*.json`. The script prints
+which panels it filled and which came out empty, so a stale or missing input is
+visible at build time. One panel is currently empty by design: the
+oracle-verification KPI (run `dynpricing verify-oracle` and record its output
+under `results/`).
+
+The **RQ2 panel** is built from the committed LLM episodes (Mistral
+`mistral-large-2512`). Because the LLM is rate-limited it never joined the
+30-seed sweep and has no rows in `metrics.csv`, so each row compares it with
+`gbm_uniform` and `fixed` averaged over *exactly the seeds that LLM run used* —
+not against their 30-seed means. The build also checks that every episode was
+scored against the same oracle profit as the committed sweep.
 
 The page also carries a **run-provenance strip**: the config fingerprint,
 horizon, price band, inventory, seed range, and the result of a build-time check

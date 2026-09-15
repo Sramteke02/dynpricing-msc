@@ -14,6 +14,7 @@ results/gbm_uniform/paired_gbm_uniform.json  paired gbm_uniform-vs-X comparisons
 results/gbm_uniform/price_paths.json         baseline seed-0 price paths
 results/gbm_uniform/diagnostics.log          band + choke price
 results/seasonal_sweep/summary.json          the amplitude sweep
+results/rq2_llm*/seed*.json                  RQ2 per-episode LLM runs (Mistral)
 
 Regenerate: ``python scripts/build_dashboard_html.py`` (see README).
 """
@@ -173,6 +174,113 @@ def build_ladder(compat: dict | None) -> tuple[dict, list[str]]:
 
 
 # -- KPI tiles -------------------------------------------------------------
+def _seed_range(seeds: list[int]) -> str:
+    """"7-9" for a contiguous run, else "0, 3, 7"."""
+    if len(seeds) > 1 and seeds == list(range(seeds[0], seeds[-1] + 1)):
+        return f"{seeds[0]}\u2013{seeds[-1]}"
+    return ", ".join(str(s) for s in seeds)
+
+
+#: Prompt templates oldest-first; the last one present is the current prompt.
+PROMPT_ORDER = ("default_v3", "default_v4", "default_v5")
+
+
+def _profit_by_seed() -> dict[tuple[str, str], dict[int, float]]:
+    """``{(agent, scenario): {seed: gross_profit}}`` from the committed episodes."""
+    by: dict[tuple[str, str], dict[int, float]] = {}
+    for r in _load_rows(ROOT / "results" / "gbm_uniform" / "metrics.csv"):
+        by.setdefault((r["agent"], r["scenario"]), {})[int(r["seed"])] = \
+            float(r["gross_profit"])
+    return by
+
+
+def build_rq2() -> dict | None:
+    """Summarise the committed LLM episodes against matched-seed baselines.
+
+    Each LLM episode is its own file under ``results/rq2_llm*/`` — the agent is
+    rate-limited, so it was never part of the 30-seed sweep and has no rows in
+    ``metrics.csv``.  The LLM ran on a handful of seeds, so the reference agents
+    are averaged over *exactly those seeds*: comparing a 3-seed LLM mean against
+    a 30-seed gbm_uniform mean would not be like-for-like.
+
+    Returns ``None`` when no episode file exists, which leaves the panel in its
+    honest "not yet run" state.
+    """
+    files = sorted(ROOT.glob("results/rq2_llm*/*.json"))
+    episodes = []
+    skipped = 0
+    for path in files:
+        if path.stem.endswith("_partial"):
+            continue  # a partial file is a crash artefact, not a finished episode
+        ep = read_json(path)
+        if not ep or "prices" not in ep:
+            continue
+        if ep.get("aborted"):
+            skipped += 1
+            continue
+        episodes.append(ep)
+    if not episodes:
+        return None
+
+    ref = _profit_by_seed()
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for ep in episodes:
+        groups.setdefault((ep["template"], ep["scenario"]), []).append(ep)
+
+    def order(key: tuple[str, str]) -> tuple:
+        template, scenario = key
+        idx = PROMPT_ORDER.index(template) if template in PROMPT_ORDER else len(PROMPT_ORDER)
+        return (idx, scenario)
+
+    rows, oracle_mismatch = [], False
+    for (template, scenario), eps in sorted(groups.items(), key=lambda kv: order(kv[0])):
+        seeds = sorted(e["seed"] for e in eps)
+        mean = lambda vals: sum(vals) / len(vals)  # noqa: E731
+
+        # The episode files record the oracle they were scored against. It must
+        # agree with the committed sweep, or the two are not the same experiment.
+        oracle_committed = [ref[("oracle", scenario)][s] for s in seeds
+                            if s in ref.get(("oracle", scenario), {})]
+        if len(oracle_committed) != len(seeds):
+            continue  # no committed baseline for these seeds; nothing to compare to
+        if any(abs(e["oracle_gross_profit"] - ref[("oracle", scenario)][e["seed"]]) > 1e-6
+               for e in eps):
+            oracle_mismatch = True
+
+        oracle = mean(oracle_committed)
+        pct = lambda agent: (  # noqa: E731
+            100 * mean([ref[(agent, scenario)][s] for s in seeds]) / oracle
+            if all(s in ref.get((agent, scenario), {}) for s in seeds) else None)
+
+        rows.append({
+            "template": template,
+            "prompt": template.replace("default_", ""),
+            "scenario": scenario,
+            "seeds": seeds,
+            "n_seeds": len(seeds),
+            "model": eps[0].get("model"),
+            "llm": 100 * mean([e["gross_profit"] for e in eps]) / oracle,
+            "gbm_uniform": pct("gbm_uniform"),
+            "fixed": pct("fixed"),
+            "fallbacks": sum(e.get("usage", {}).get("fallbacks", 0) for e in eps),
+            "api_calls": sum(e.get("usage", {}).get("api_calls", 0) for e in eps),
+            "cost_usd": sum(e.get("cost_usd", 0.0) for e in eps),
+        })
+    if not rows:
+        return None
+
+    models = sorted({r["model"] for r in rows if r["model"]})
+    return {
+        "rows": rows,
+        "models": models,
+        "current_prompt": rows[-1]["prompt"],
+        "n_episodes": len(episodes),
+        "skipped_aborted": skipped,
+        "total_cost_usd": sum(r["cost_usd"] for r in rows),
+        "oracle_verified": not oracle_mismatch,
+    }
+
+
 def find_oracle_verification() -> dict | None:
     """The verify-oracle gap, if any committed results file records it."""
     for path in sorted((ROOT / "results").rglob("*")):
@@ -185,7 +293,7 @@ def find_oracle_verification() -> dict | None:
     return None
 
 
-def build_kpis(ladder: dict, paired: list | None) -> list[dict]:
+def build_kpis(ladder: dict, paired: list | None, rq2: dict | None) -> list[dict]:
     tiles: list[dict] = []
 
     verif = find_oracle_verification()
@@ -228,17 +336,34 @@ def build_kpis(ladder: dict, paired: list | None) -> list[dict]:
                       "value": None, "empty": "not yet run — no baseline rows for "
                       "gbm and gbm_uniform in the committed results."})
 
-    has_llm = any(r["agent"].split(":")[0] == "llm"
-                  for rows in ladder.values() for r in rows)
-    tiles.append({
-        "id": "rq2",
-        "label": "RQ2 — LLM vs GBM",
-        "value": None if not has_llm else "see ladder",
-        "pending": not has_llm,
-        "empty": ("pending — the LLM agent has not been run. No llm rows exist in "
-                  "any committed results file (needs OPENAI_API_KEY)."
-                  if not has_llm else None),
-    })
+    # The LLM is rate-limited and never joined the 30-seed sweep, so RQ2 comes
+    # from the per-episode files, not from the ladder.
+    if rq2:
+        head = rq2["rows"][-1]  # the current prompt
+        gap = (head["llm"] - head["gbm_uniform"]
+               if head["gbm_uniform"] is not None else None)
+        sub = (f"{head['model']} · prompt {head['prompt']} · "
+               f"{head['scenario'].replace('_', ' ')} · "
+               f"{head['n_seeds']} seeds ({_seed_range(head['seeds'])}), matched")
+        tiles.append({
+            "id": "rq2",
+            "label": "RQ2 — LLM vs GBM",
+            "value": f"{head['llm']:.1f}%",
+            "delta": (None if gap is None else
+                      f"{gap:+.1f} pts vs gbm_uniform on the same seeds"),
+            "delta_neg": gap is not None and gap < 0,
+            "sub": sub,
+            "empty": None,
+        })
+    else:
+        tiles.append({
+            "id": "rq2",
+            "label": "RQ2 — LLM vs GBM",
+            "value": None,
+            "pending": True,
+            "empty": ("pending — the LLM agent has not been run. No episode files "
+                      "exist under results/rq2_llm*/ (needs MISTRAL_API_KEY)."),
+        })
     return tiles
 
 
@@ -401,6 +526,7 @@ select:focus-visible, button:focus-visible { outline: 2px solid var(--series-1);
 .kpi .value { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
 .kpi.hero .value { font-size: 3rem; }
 .kpi .delta { color: var(--good); font-size: .875rem; font-weight: 600; margin-top: .2rem; }
+.kpi .delta.neg { color: var(--text-secondary); }
 .kpi .sub { color: var(--text-secondary); font-size: .78125rem; margin-top: .45rem; }
 .kpi .empty { color: var(--text-secondary); font-size: .8125rem; margin-top: .3rem; }
 .badge { display: inline-block; font-size: .6875rem; font-weight: 600;
@@ -486,6 +612,17 @@ BODY = """</head>
   <div class="tablewrap" id="amp-table" hidden></div>
 </section>
 
+<section class="section" aria-labelledby="rq2-h">
+  <div class="section-head">
+    <h2 id="rq2-h">RQ2 — LLM vs GBM</h2>
+    <div class="controls"><button type="button" data-table="rq2">Show table</button></div>
+  </div>
+  <p class="section-note" id="rq2-note"></p>
+  <div class="legend" id="rq2-legend"></div>
+  <div class="chart" id="rq2-chart"></div>
+  <div class="tablewrap" id="rq2-table" hidden></div>
+</section>
+
 <section class="section" aria-labelledby="paths-h">
   <div class="section-head">
     <h2 id="paths-h">GBM diagnosis — price path, baseline seed 0</h2>
@@ -565,7 +702,7 @@ function renderKpis() {
     card.appendChild(html('div', 'label', k.label));
     if (k.value != null) {
       card.appendChild(html('div', 'value', k.value));
-      if (k.delta) card.appendChild(html('div', 'delta', k.delta));
+      if (k.delta) card.appendChild(html('div', 'delta' + (k.delta_neg ? ' neg' : ''), k.delta));
       if (k.sub) card.appendChild(html('div', 'sub', k.sub));
     } else {
       card.appendChild(html('span', 'badge', k.pending ? 'pending' : 'not yet run'));
@@ -811,6 +948,118 @@ function renderLegend(hostId, names, colors, kind) {
   }
 }
 
+/* ---------- RQ2: LLM vs the matched-seed baselines ---------- */
+function renderRq2() {
+  const host = document.getElementById('rq2-chart');
+  const note = document.getElementById('rq2-note');
+  host.replaceChildren();
+  if (!DATA.rq2) {
+    note.textContent = '';
+    host.appendChild(html('div', 'empty-panel',
+      'not yet run — no LLM episode files exist under results/rq2_llm*/.'));
+    document.getElementById('rq2-legend').replaceChildren();
+    return;
+  }
+  const R = DATA.rq2, rows = R.rows;
+  const series = ['llm', 'gbm_uniform', 'fixed'];
+  const colors = { llm: cssVar('--series-1'), gbm_uniform: cssVar('--series-2'),
+                   fixed: cssVar('--series-3') };
+  renderLegend('rq2-legend', series, colors, 'rect');
+
+  const fb = rows.reduce((a, r) => a + r.fallbacks, 0);
+  note.textContent = `Mean gross profit as a share of the oracle ceiling. The LLM `
+    + `(${R.models.join(', ')}) is rate-limited and was not part of the 30-seed sweep, `
+    + `so each row compares it with gbm_uniform and fixed on exactly its own seeds. `
+    + `${R.n_episodes} committed episodes, ${fb === 0 ? 'no' : fb} parser fallbacks, `
+    + `$${R.total_cost_usd.toFixed(2)} of API spend. `
+    + (R.oracle_verified
+        ? 'Every episode was scored against the same oracle profit as the committed sweep.'
+        : 'WARNING: an episode was scored against a different oracle than the committed sweep.')
+    + ' Seed counts are small — read the gaps as indicative, not as a powered comparison.';
+
+  const W = 800, barH = 13, barGap = 3, groupPad = 20, padL = 168, padR = 62, padT = 14;
+  const groupH = series.length * (barH + barGap) + groupPad;
+  const H = padT + rows.length * groupH + 34;
+  const xmax = 105;
+  const x = v => padL + (v / xmax) * (W - padL - padR);
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+    'aria-label': 'LLM versus gbm_uniform and fixed, percent of oracle' });
+
+  for (const t of [0, 25, 50, 75, 100]) {
+    svg.appendChild(el('line', { x1: x(t), x2: x(t), y1: padT,
+      y2: padT + rows.length * groupH, stroke: cssVar('--grid'), 'stroke-width': 1 }));
+    svg.appendChild(el('text', { x: x(t), y: padT + rows.length * groupH + 18,
+      'text-anchor': 'middle', fill: cssVar('--muted'), 'font-size': 11 }, t + '%'));
+  }
+  svg.appendChild(el('line', { x1: x(100), x2: x(100), y1: padT - 2,
+    y2: padT + rows.length * groupH, stroke: cssVar('--axis'), 'stroke-width': 1 }));
+
+  const tip = makeTooltip(host);
+  rows.forEach((r, gi) => {
+    const top = padT + gi * groupH;
+    svg.appendChild(el('text', { x: padL - 10, y: top + 12, 'text-anchor': 'end',
+      fill: cssVar('--text-primary'), 'font-size': 12 },
+      `prompt ${r.prompt} · ${r.scenario.replace(/_/g, ' ')}`));
+    svg.appendChild(el('text', { x: padL - 10, y: top + 27, 'text-anchor': 'end',
+      fill: cssVar('--muted'), 'font-size': 10 },
+      `${r.n_seeds} seeds (${r.seeds.join(', ')})`));
+
+    series.forEach((name, si) => {
+      const v = r[name];
+      if (v == null) return;
+      const y = top + si * (barH + barGap);
+      const w = Math.max(2, x(v) - x(0));
+      const rad = Math.min(4, w);
+      const d = `M${x(0)},${y} H${x(0) + w - rad} a${rad},${rad} 0 0 1 ${rad},${rad}`
+        + ` V${y + barH - rad} a${rad},${rad} 0 0 1 ${-rad},${rad} H${x(0)} Z`;
+      const bar = el('path', { d, fill: colors[name] });
+      svg.appendChild(bar);
+      svg.appendChild(el('text', { x: x(v) + 7, y: y + barH - 2,
+        fill: cssVar('--text-primary'), 'font-size': 11 }, v.toFixed(1) + '%'));
+
+      const hit = el('rect', { x: padL, y, width: W - padL - padR, height: barH + barGap,
+        fill: 'transparent', tabindex: 0, role: 'img',
+        'aria-label': `prompt ${r.prompt}, ${r.scenario.replace(/_/g, ' ')}, `
+          + `${name}: ${v.toFixed(1)}% of oracle over ${r.n_seeds} seeds` });
+      const show = (ev) => {
+        const bb = host.getBoundingClientRect();
+        const px = ev.clientX != null ? ev.clientX - bb.left : x(v) * bb.width / W;
+        const py = ev.clientY != null ? ev.clientY - bb.top : y * bb.width / W;
+        const tt = series.filter(k => r[k] != null).map(k => (
+          { color: colors[k], value: r[k].toFixed(1) + '%', name: k }));
+        tip.show(px, py, `prompt ${r.prompt} · ${r.scenario.replace(/_/g, ' ')}`, tt);
+        bar.setAttribute('opacity', '0.82');
+      };
+      const hide = () => { tip.hide(); bar.setAttribute('opacity', '1'); };
+      hit.addEventListener('pointermove', show);
+      hit.addEventListener('pointerleave', hide);
+      hit.addEventListener('focus', show);
+      hit.addEventListener('blur', hide);
+      svg.appendChild(hit);
+    });
+  });
+  host.appendChild(svg);
+
+  const t = html('table');
+  const head = html('tr');
+  ['Prompt', 'Scenario', 'Seeds', 'LLM', 'gbm_uniform', 'fixed', 'LLM − gbm_uniform',
+   'Fallbacks', 'Cost (USD)'].forEach(h => head.appendChild(html('th', null, h)));
+  t.appendChild(head);
+  for (const r of rows) {
+    const tr = html('tr');
+    const gap = r.gbm_uniform == null ? '—'
+      : (r.llm - r.gbm_uniform).toFixed(1) + ' pts';
+    [r.prompt, r.scenario.replace(/_/g, ' '), r.seeds.join(', '),
+     r.llm.toFixed(2) + '%',
+     r.gbm_uniform == null ? '—' : r.gbm_uniform.toFixed(2) + '%',
+     r.fixed == null ? '—' : r.fixed.toFixed(2) + '%',
+     gap, String(r.fallbacks), '$' + r.cost_usd.toFixed(2)]
+      .forEach(v => tr.appendChild(html('td', null, v)));
+    t.appendChild(tr);
+  }
+  document.getElementById('rq2-table').replaceChildren(t);
+}
+
 /* ---------- 3. amplitude curve ---------- */
 function renderAmplitude() {
   const host = document.getElementById('amp-chart');
@@ -933,10 +1182,11 @@ sel.addEventListener('change', renderLadder);
 document.getElementById('footer').textContent = DATA.footer;
 
 function renderAll() {
-  renderKpis(); renderProvenance(); renderLadder(); renderAmplitude(); renderPaths();
+  renderKpis(); renderProvenance(); renderLadder(); renderAmplitude(); renderRq2();
+  renderPaths();
 }
 renderAll();
-addEventListener('resize', () => { renderLadder(); renderAmplitude(); renderPaths(); });
+addEventListener('resize', () => { renderLadder(); renderAmplitude(); renderRq2(); renderPaths(); });
 """
 
 
@@ -948,14 +1198,16 @@ def main() -> int:
         print("[error] no ladder data found under results/", file=sys.stderr)
         return 1
     paired = read_json(ROOT / "results" / "gbm_uniform" / "paired_gbm_uniform.json")
+    rq2 = build_rq2()
     data = {
-        "kpis": build_kpis(ladder, paired),
+        "kpis": build_kpis(ladder, paired, rq2),
         "config": config,
         "compat": compat,
         "ladder": ladder,
         "ladderNotes": ladder_notes,
         "scenarios": sorted(ladder.keys()),
         "amplitude": build_amplitude(),
+        "rq2": rq2,
         "paths": build_paths(),
         "footer": ("Generated by scripts/build_dashboard_html.py from the committed "
                    "results files. Regenerate after a new run: "
@@ -972,6 +1224,22 @@ def main() -> int:
             ("pending" if k.get("pending") else "not yet run") + ")"
         print(f"     KPI {k['id']:<20} {state}")
     print(f"     amplitude panel: {'present' if data['amplitude'] else 'EMPTY'}")
+    if rq2:
+        print(f"     RQ2 LLM        : {rq2['n_episodes']} episodes, "
+              f"{', '.join(rq2['models'])}, ${rq2['total_cost_usd']:.2f}"
+              + (f", {rq2['skipped_aborted']} aborted skipped"
+                 if rq2["skipped_aborted"] else ""))
+        for r in rq2["rows"]:
+            ref = "—" if r["gbm_uniform"] is None else f"{r['gbm_uniform']:.2f}%"
+            print(f"       {r['prompt']:>3s} {r['scenario']:<20s} "
+                  f"n={r['n_seeds']} seeds {_seed_range(r['seeds']):<6s} "
+                  f"LLM {r['llm']:6.2f}%  gbm_uniform {ref}"
+                  + ("" if r["fallbacks"] == 0 else f"  [{r['fallbacks']} fallbacks]"))
+        if not rq2["oracle_verified"]:
+            print("[warn] an RQ2 episode was scored against a different oracle than "
+                  "the committed sweep; the page says so", file=sys.stderr)
+    else:
+        print("     RQ2 LLM        : EMPTY (no episode files)")
     print(f"     price paths    : {'present' if data['paths'] else 'EMPTY'}")
     if config:
         print(f"     config         : {config['fingerprint']} horizon={config['horizon']} "
