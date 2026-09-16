@@ -1,0 +1,25 @@
+# Oracle verification — fluid/pacing oracle vs exact backward-induction DP
+#
+# Produced by:  dynpricing verify-oracle --config configs/calibrated.json --seeds 20
+# Date       :  2026-09-16T02:46:28Z
+# Commit     :  39eeeae
+# Config     :  configs/calibrated.json (sha256 head 07ef55ff9740)
+#
+# This file is the committed evidence for the scoring-ceiling check: the cheap
+# fluid oracle used for all scoring agrees with the exact dynamic program.
+
+Building exact backward-induction oracle (deterministic relaxation)...
+  price-lattice size : 513
+  inventory buckets  : 400
+  deterministic optimal value V0 = 19,039.5
+
+realised mean gross profit over 20 seeds:
+  fixed (sanity)              :     18,198.8
+  fluid/pacing oracle         :     18,974.3
+  backward-induction oracle   :     18,982.7
+  DP deterministic optimum V0 :     19,039.5
+
+  fluid vs DP gap             : -0.04%
+  agreement (|gap| <= 3.0%) : YES
+
+Interpretation: the fluid oracle is near-optimal (matches the exact ceiling).
