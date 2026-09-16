@@ -10,8 +10,8 @@ identical except for the two changes under test:
    band** ``[price_min, price_max]`` instead of by taking random moves from the
    action set ``{hold, +5%, -5%, -10%}``. That action set has geometric drift
    -2.66%/step, so the original agent's training data concentrates near the
-   bottom of the band (on the calibrated config: ``[0.42, 2.43]`` out of a
-   ``[0.84, 5.97]`` band).
+   bottom of the band (on the calibrated config: ``[0.840, 2.553]`` out of a
+   ``[0.840, 5.972]`` band — see ``results/gbm_uniform/diagnostics.log``).
 
 2. **Optimiser clamp.** The agent records the min/max price it actually observed
    in training and, at decision time, never selects a price above that

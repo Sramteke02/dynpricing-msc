@@ -148,7 +148,7 @@ pytest -q
 |-----|-------|
 | E1 Gymnasium env w/ demand, inventory, competitors, seasonality | `src/dynpricing/env/` |
 | E2 Offline calibration from real data | `src/dynpricing/calibration/` |
-| E3 Five rule-based baselines | `src/dynpricing/agents/baselines.py` |
+| E3 Four rule-based baselines (+ the oracle, which is the ceiling, not a baseline) | `src/dynpricing/agents/baselines.py` |
 | E4 Two-stage gradient-boosting agent | `src/dynpricing/agents/gbm_agent.py` |
 | E5 Shared evaluation harness | `src/dynpricing/eval/` |
 | E6 CLI + dashboard | `src/dynpricing/cli.py`, `src/dynpricing/dashboard/` |
