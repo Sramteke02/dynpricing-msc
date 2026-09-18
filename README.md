@@ -3,8 +3,7 @@
 Comparing gradient-boosted and large-language-model pricing agents in a
 custom, data-calibrated, Gymnasium-compatible market simulation.
 
-This repository implements the MSc project described in
-`proposal_complete.pdf`. It provides:
+This repository is the source-code submission for the MSc project. It provides:
 
 * **Layer 1 — Data & calibration.** Offline calibration of the demand model
   from open UK retail datasets (UCI Online Retail II, etc.), with a robust
@@ -18,6 +17,48 @@ This repository implements the MSc project described in
   Markov Decision Process, with a price-sensitive demand model.
 * **Layer 5 — Evaluation & output.** A shared runner over many seeds/scenarios,
   a metrics store, and a results dashboard (Matplotlib; optional W&B).
+
+## Running this submission (no API key, no dataset download)
+
+Everything below works from the submitted archive alone. Python 3.11 or newer
+is required; installation pulls numpy, pandas, scikit-learn, matplotlib and
+gymnasium from PyPI.
+
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Then, in order of how long each takes:
+
+```bash
+# 1. Tests (~2 min). 72 pass, 1 xfail.
+pytest -q
+
+# 2. All 8 agents on the baseline scenario, with bootstrap CIs and paired,
+#    by-seed comparisons (~3 min). The LLM runs as an offline heuristic here,
+#    so no API key and no network are needed.
+dynpricing demo
+
+# 3. Check the scoring ceiling: the cheap fluid oracle used for all scoring
+#    against an exact backward-induction dynamic program (~4 min).
+dynpricing verify-oracle --config configs/calibrated.json --seeds 5
+
+# 4. Rebuild the results dashboard from the committed result files (~5 s),
+#    then open results/dashboard/index.html in any browser.
+python scripts/build_dashboard_html.py
+```
+
+`configs/calibrated.json` is included, so **no calibration step is needed** —
+the raw UCI dataset is not part of this archive (it is ~44 MB and is not mine
+to redistribute; see `data/README.md` for the download link). The committed
+`results/` directory holds the experiment output the dissertation reports,
+which is why step 4 reproduces the dashboard without re-running anything.
+
+The LLM agent needs `MISTRAL_API_KEY` to make real calls. Without one,
+`dynpricing llm-smoke --steps 8` still does a token-free dry render showing the
+exact prompts and the JSON parser's behaviour, and `--llm-mode heuristic`
+(the default in `demo`) keeps the full pipeline runnable offline.
 
 ## Quick start
 
@@ -98,9 +139,9 @@ It reads `results/metrics_aggregated.json`,
 `results/gbm_uniform/diagnostics.log`, `results/seasonal_sweep/summary.json` and
 the per-episode LLM runs under `results/rq2_llm*/seed*.json`. The script prints
 which panels it filled and which came out empty, so a stale or missing input is
-visible at build time. One panel is currently empty by design: the
-oracle-verification KPI (run `dynpricing verify-oracle` and record its output
-under `results/`).
+visible at build time. Every panel is currently populated; the
+oracle-verification KPI is fed by `results/verify_oracle.txt` (regenerate it
+with `dynpricing verify-oracle` and record the output there).
 
 The **RQ2 panel** is built from the committed LLM episodes (Mistral
 `mistral-large-2512`). Because the LLM is rate-limited it never joined the
@@ -126,9 +167,12 @@ is still fine.
 ### Reproducibility & rigour notes
 
 * The LLM agent pins a dated model snapshot, uses `temperature=0`, forces JSON
-  output, sets a request seed, and logs the full prompt/response/parse for every
+  output, and logs the full prompt/response/parse for every
   call (`--out` writes a JSONL audit log; `LLMAgent.usage_summary()` aggregates
-  token cost and fallback rate).
+  token cost and fallback rate). A request `seed` is sent only to providers
+  whose API accepts one (`PROVIDERS[...]["supports_seed"]`); Mistral's
+  chat-completions schema does not, so determinism there rests on
+  `temperature=0` and the response cache.
 * Calibration figures are **plausible simulation parameters**, not identified
   causal elasticities — price and quantity are jointly determined, so no
   identification is claimed (see `calibration/calibrate.py`).
