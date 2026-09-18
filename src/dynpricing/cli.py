@@ -497,7 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--config", default=None)
     v.add_argument("--seeds", type=int, default=20)
     v.add_argument("--inv-buckets", type=int, default=400)
-    v.add_argument("--tol", type=float, default=3.0, help="agreement tolerance (%)")
+    v.add_argument("--tol", type=float, default=3.0, help="agreement tolerance (%%)")
     v.set_defaults(func=cmd_verify_oracle)
 
     dm = sub.add_parser("demo", help="quick smoke run of all agents")
