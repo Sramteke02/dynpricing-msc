@@ -34,7 +34,7 @@ from dynpricing.agents.llm_agent import (LLMAgent, LLMFallbackError,
                                          RPM_SAFETY, live_rpm_limit)
 from dynpricing.eval.harness import Scenario, default_scenarios, run_episode
 
-IN_PRICE, OUT_PRICE = 0.50, 1.50   # USD / 1M tokens, Mistral Large
+IN_PRICE, OUT_PRICE = 0.50, 1.50
 ORACLE_CACHE = ROOT / "results" / "seasonal_sweep" / "oracle_cache.json"
 
 
@@ -43,7 +43,6 @@ def config_key(cfg: EnvConfig) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
-#: committed 5-agent run: has oracle rows for every scenario x seed
 METRICS_CSV = ROOT / "results" / "gbm_uniform" / "metrics.csv"
 
 

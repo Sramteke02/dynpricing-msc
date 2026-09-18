@@ -72,14 +72,11 @@ def main() -> int:
             continue
         ok = run_seed(seed, args.template, out_dir, 1, args.scenario)
         if not ok:
-            # let the rate-limit window drain before retrying; retrying in the
-            # same second just reproduces the same 429
             print(f"    seed {seed} failed; waiting {args.cooldown}s before retry",
                   flush=True)
             time.sleep(args.cooldown)
             ok = run_seed(seed, args.template, out_dir, 2, args.scenario)
         (done if ok else failed).append(seed)
-        # and drain it again before the next episode's rate-limit probe
         if seed != seeds[-1]:
             time.sleep(args.cooldown)
         el = (time.time() - started) / 60

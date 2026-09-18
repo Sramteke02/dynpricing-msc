@@ -32,7 +32,7 @@ from dynpricing.eval.stats import bootstrap_mean_ci
 
 CONFIG = "configs/calibrated.json"
 N_SEEDS = 30
-FAILING_SEED = 0  # the seed documented in docs/gbm_extrapolation_diagnosis.md
+FAILING_SEED = 0
 
 
 def rule(title: str) -> None:
@@ -65,8 +65,6 @@ def main() -> None:
     print(f"legal band [{cfg.price_min:.3f}, {cfg.price_max:.3f}]   "
           f"true choke price (day 0) ~ {choke:.3f}\n")
 
-    # uniform_exploration=False reproduces the original agent's exploration
-    # exactly (same rng draws, same action set), so this is a faithful contrast.
     original = train_agent(cfg, uniform=False, clamp=False, seed=0)
     print("ORIGINAL gbm exploration (random moves over {hold,+5%,-5%,-10%}):")
     print(f"  training prices: [{original.train_price_min:.3f}, "
@@ -106,10 +104,6 @@ def main() -> None:
          f"(baseline, {N_SEEDS} seeds)")
     seeds = list(range(N_SEEDS))
 
-    # The clamp only affects act(), never training, so each exploration mode is
-    # fitted ONCE per seed and evaluated twice (clamp off / clamp on). The two
-    # cells in a row therefore share an identical fitted model and differ only
-    # by the clamp — the cleanest possible paired contrast.
     cells: dict[tuple[bool, bool], list[float]] = {}
     binds: dict[tuple[bool, bool], tuple[int, int]] = {}
     for uniform_ in (False, True):
@@ -132,8 +126,6 @@ def main() -> None:
     ]
     oracle = float(np.mean(oracle_profits))
 
-    # Faithfulness check: (drifting explore, no clamp) must reproduce the
-    # ORIGINAL gbm agent exactly, seed for seed.
     original = [
         run_episode(build_agent("gbm", cfg, seed=s).train(
             make_env=lambda: MarketEnv(cfg), seed=s),

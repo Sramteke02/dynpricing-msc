@@ -75,9 +75,6 @@ class CalibrationResult:
         return "\n".join(lines)
 
 
-# --------------------------------------------------------------------------
-# Individual source calibrators
-# --------------------------------------------------------------------------
 def _calibrate_from_uci(
     path: Path,
     result: CalibrationResult,
@@ -107,35 +104,23 @@ def _calibrate_from_uci(
 
     df = df[[price_col, qty_col]].copy()
     df = df[(df[price_col] > 0) & (df[qty_col] > 0)]
-    df = df[df[price_col] < df[price_col].quantile(0.99)]  # trim outliers
+    df = df[df[price_col] < df[price_col].quantile(0.99)]
     if len(df) < 100:
         result.notes.append("UCI: too few clean rows; skipped")
         return
 
-    # robust reference price/volume/cost and price band from the data
     ref_price = round(float(df[price_col].median()), 3)
-    # daily-equivalent reference volume per product line (aggregate, smoothed)
     q_ref = round(float(np.clip(df[qty_col].median() * 12.0, 20.0, 500.0)), 1)
     unit_cost = round(ref_price * 0.4, 3)
 
-    # IMPOSE the own-price sensitivity from a literature elasticity (NOT regressed)
     b = eps_target * q_ref / ref_price
     d = cross_ratio * b
     a0 = q_ref + b * ref_price - d * ref_price
 
-    # Reconcile the price band with the DEMAND parameters, not UCI's raw observed
-    # price range. The old band (5th/95th percentile, ~[0.42, 9.95]) ran ~3x the
-    # choke price a/b = p_ref*(1 + 1/eps_target) = 3.15, leaving ~71% of the band
-    # economically dead (q = 0). Instead:
-    #   price_min = unit_cost                (no below-cost pricing)
-    #   price_max = 1.2 * max_t choke(t)     over the horizon at the MAX scenario
-    #               amplitude, where choke(t) = a(t)/b is the zero-demand price;
-    #               1.2x leaves headroom for competitor drift without a large dead
-    #               zone.
     competitor_init = (2.0, 2.2)
     cbar = float(np.mean(competitor_init))
     base = result.config
-    max_amp = min(0.6, base.seasonal_amplitude * 2.0)  # strong_seasonality amplitude
+    max_amp = min(0.6, base.seasonal_amplitude * 2.0)
 
     def _choke(t: int) -> float:
         S = 1.0 + max_amp * np.sin((base.start_day_of_year + t) / 365.0 * 2.0 * np.pi)
@@ -156,8 +141,6 @@ def _calibrate_from_uci(
         a0=a0,
         b=b,
         d=d,
-        # competitor prices anchored near the (new) reference price, so cbar is
-        # inside the band. The old (10.0, 10.5) was built for ref_price=10.
         competitor_init=competitor_init,
     )
     result.sources_used.append("UCI Online Retail II")
@@ -182,7 +165,6 @@ def _calibrate_from_ons(path: Path, result: CalibrationResult, overrides: dict) 
     df.columns = [c.strip().lower() for c in df.columns]
     val_col = _first_present(df, ["value", "index", "v4_1", "retail_sales_index"])
     if val_col is None:
-        # fall back to the last numeric column
         num = df.select_dtypes("number")
         if num.shape[1] == 0:
             result.notes.append("ONS: no numeric column found; skipped")
@@ -207,10 +189,8 @@ def _calibrate_holidays(result: CalibrationResult, overrides: dict, horizon: int
 
         with urllib.request.urlopen("https://www.gov.uk/bank-holidays.json", timeout=10) as r:
             data = json.loads(r.read().decode())
-        # Just record that the source is available; map the first few into range.
         events = data.get("england-and-wales", {}).get("events", [])
         if events:
-            # place a representative holiday cluster mid-horizon
             mid = horizon // 2
             overrides["holiday_days"] = tuple(range(mid, min(horizon, mid + 3)))
             result.sources_used.append("UK Bank Holidays (gov.uk)")
@@ -219,9 +199,6 @@ def _calibrate_holidays(result: CalibrationResult, overrides: dict, horizon: int
         result.notes.append(f"Holidays: fetch skipped ({exc})")
 
 
-# --------------------------------------------------------------------------
-# Public API
-# --------------------------------------------------------------------------
 def calibrate(
     data_dir: str | Path = "data",
     *,
@@ -290,7 +267,6 @@ def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
     d_hi = dm.expected_units(p_hi, comps, day=0)
     d_ref = dm.expected_units(cfg.ref_price, comps, day=0)
 
-    # a +10% price change around the reference: implied arc response
     p1 = min(cfg.ref_price * 1.10, p_hi)
     d0 = dm.expected_units(cfg.ref_price, comps, day=0)
     d1 = dm.expected_units(p1, comps, day=0)
@@ -307,7 +283,7 @@ def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
 
     monotone = d_lo > d_ref >= d_hi >= 0.0
     plausible_param = 0.5 <= implied <= 4.0
-    plausible_drop = -6.0 < arc < -0.1  # downward and not absurdly steep
+    plausible_drop = -6.0 < arc < -0.1
     interior = a_min > cfg.b * cfg.unit_cost
     ok = bool(monotone and plausible_param and plausible_drop and interior)
 
@@ -333,9 +309,6 @@ def sanity_report(cfg: EnvConfig) -> tuple[str, bool]:
     return "\n".join(lines), ok
 
 
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
 def _first_present(df, candidates):
     for c in candidates:
         if c in df.columns:

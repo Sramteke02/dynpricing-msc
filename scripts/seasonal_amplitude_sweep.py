@@ -50,7 +50,6 @@ OUT_DIR = Path("results/seasonal_sweep")
 CACHE_PATH = OUT_DIR / "oracle_cache.json"
 
 
-# -- config helpers --------------------------------------------------------
 def with_amplitude(base: EnvConfig, amplitude: float) -> EnvConfig:
     d = base.to_dict()
     d["seasonal_amplitude"] = float(amplitude)
@@ -79,7 +78,6 @@ def optimal_price_dispersion(cfg: EnvConfig) -> tuple[float, float, float]:
     return float(arr.min()), float(arr.max()), float(arr.std())
 
 
-# -- episode running (with an oracle cache) --------------------------------
 def load_cache() -> dict:
     if CACHE_PATH.exists():
         return json.loads(CACHE_PATH.read_text())
@@ -107,7 +105,6 @@ def run_agent(name: str, cfg: EnvConfig, seed: int, scenario: str,
     return row
 
 
-# -- reporting -------------------------------------------------------------
 def bar(value: float, lo: float, hi: float, width: int = 46) -> str:
     frac = 0.0 if hi <= lo else (value - lo) / (hi - lo)
     return "#" * max(1, int(round(frac * width)))
@@ -160,7 +157,6 @@ def main() -> None:
         if not checked:
             print("  (nothing cached yet for these amplitudes)")
 
-    # -- the sweep ---------------------------------------------------------
     rows: list[dict] = []
     for a in amplitudes:
         cfg = with_amplitude(base, a)
@@ -183,7 +179,6 @@ def main() -> None:
     summ = summarize(clean)
     (OUT_DIR / "metrics_aggregated.json").write_text(json.dumps(summ, indent=2))
 
-    # -- per-amplitude ladders --------------------------------------------
     pct: dict[str, dict[float, float]] = {n: {} for n in AGENTS}
     profits: dict[str, dict[float, float]] = {n: {} for n in AGENTS}
     for a in amplitudes:
@@ -201,7 +196,6 @@ def main() -> None:
             print(f"  {name:<13} profit={mean:10.1f}  "
                   f"[{lo:9.1f}, {hi:9.1f}]  ({share:6.2f}% of oracle)")
 
-    # -- the curve ---------------------------------------------------------
     print("\n" + "=" * 78)
     print("CURVE — % of oracle vs seasonal amplitude")
     print("=" * 78)
@@ -218,7 +212,6 @@ def main() -> None:
             v = pct[name][a]
             print(f"    {name:<12}{v:6.2f}% |{bar(v, lo_axis, 100.0)}")
 
-    # -- the three questions ----------------------------------------------
     print("\n" + "=" * 78)
     print("ANSWERS")
     print("=" * 78)

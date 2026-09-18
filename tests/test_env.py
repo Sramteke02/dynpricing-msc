@@ -8,9 +8,6 @@ from dynpricing.env.demand import DemandModel
 from dynpricing.env.market_env import MarketEnv, ACTIONS
 
 
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
 def _intercept(cfg, dm, day, cbar):
     """a(t) = a0*S(t)*C(t) + d*cbar, the linear-demand intercept."""
     return cfg.a0 * dm.seasonal_factor(day) * dm.calendar_factor(day) + cfg.d * cbar
@@ -29,39 +26,35 @@ def _seasonal_days(dm):
     return int(np.argmax(S)), int(np.argmin(S)), int(np.argmin(np.abs(S - 1.0)))
 
 
-# ---------------------------------------------------------------------------
-# demand-form tests (linear / differentiated-Bertrand)
-# ---------------------------------------------------------------------------
 def test_demand_falls_as_price_rises():
     cfg = EnvConfig()
     dm = DemandModel(cfg)
     lo = dm.expected_units(cfg.price_min, cfg.competitor_init, day=0)
     hi = dm.expected_units(cfg.price_max, cfg.competitor_init, day=0)
-    assert lo > hi >= 0  # downward-sloping demand, clamped at zero
+    assert lo > hi >= 0
 
 
 def test_demand_magnitude_plausible():
     cfg = EnvConfig()
     dm = DemandModel(cfg)
     at_ref = dm.expected_units(cfg.ref_price, cfg.competitor_init, day=0)
-    # at the reference price, demand should be on the order of base_demand
     assert 0.3 * cfg.base_demand < at_ref < 3 * cfg.base_demand
 
 
 def test_demand_strictly_decreasing_across_band():
     """(1) q(p) strictly decreasing in p wherever demand is positive, and
     never increasing anywhere in the band."""
-    cfg = EnvConfig(weekend_uplift=0.0)  # isolate the seasonal factor
+    cfg = EnvConfig(weekend_uplift=0.0)
     dm = DemandModel(cfg)
     comps = [cfg.ref_price]
     for day in _seasonal_days(dm):
         ps = np.linspace(cfg.price_min, cfg.price_max, 400)
         q = np.array([dm.expected_units(p, comps, day) for p in ps])
         diffs = np.diff(q)
-        assert np.all(diffs <= 1e-9)                    # never increasing
+        assert np.all(diffs <= 1e-9)
         positive = q[:-1] > 1e-9
         assert positive.any()
-        assert np.all(diffs[positive] < 0)              # strict where q > 0
+        assert np.all(diffs[positive] < 0)
 
 
 def test_demand_zero_at_choke_and_never_negative():
@@ -74,7 +67,7 @@ def test_demand_zero_at_choke_and_never_negative():
     for day in _seasonal_days(dm):
         a = _intercept(cfg, dm, day, cbar)
         choke = a / cfg.b
-        assert cfg.price_min <= choke <= cfg.price_max   # choke sits in the band
+        assert cfg.price_min <= choke <= cfg.price_max
         assert dm.expected_units(choke, comps, day) == pytest.approx(0.0, abs=1e-9)
         assert dm.expected_units(choke * 0.99, comps, day) > 0.0
         for p in np.linspace(cfg.price_min, cfg.price_max, 200):
@@ -118,14 +111,11 @@ def test_interior_condition_a_gt_bc_over_horizon():
         assert _intercept(cfg, dm, t, cbar) > cfg.b * cfg.unit_cost
 
 
-# ---------------------------------------------------------------------------
-# environment-mechanics tests (demand-form agnostic)
-# ---------------------------------------------------------------------------
 def test_reward_is_margin_times_units():
-    cfg = EnvConfig(noise_cv=0.0)  # deterministic
+    cfg = EnvConfig(noise_cv=0.0)
     env = MarketEnv(cfg)
     env.reset(seed=0)
-    _, reward, _, _, info = env.step(0)  # hold
+    _, reward, _, _, info = env.step(0)
     expected = (info["price"] - cfg.unit_cost) * info["units"]
     assert reward == pytest.approx(expected)
     assert info["revenue"] == pytest.approx(info["price"] * info["units"])
@@ -138,12 +128,12 @@ def test_inventory_depletes_and_terminates():
     inv_prev = cfg.init_inventory
     terminated = False
     for _ in range(1000):
-        _, _, terminated, truncated, info = env.step(2)  # lower price -> more sales
+        _, _, terminated, truncated, info = env.step(2)
         assert info["state"].inventory <= inv_prev
         inv_prev = info["state"].inventory
         if terminated or truncated:
             break
-    assert terminated  # should stock out before the horizon
+    assert terminated
 
 
 def test_obs_shape_and_state_wellformed():
@@ -184,5 +174,4 @@ def test_optimal_price_within_band():
     dm = DemandModel(cfg)
     p = dm.optimal_price(cfg.competitor_init, day=0)
     assert cfg.price_min <= p <= cfg.price_max
-    # optimum should be above marginal cost
     assert p > cfg.unit_cost

@@ -45,9 +45,6 @@ ALL_AGENTS = ["fixed", "cost_plus", "competitor_match", "random",
               "gbm", "gbm_uniform", "oracle", "llm"]
 DEFAULT_AGENTS = [a for a in ALL_AGENTS if a != "llm"]
 
-#: colour follows the entity, never its rank — a fixed slot per agent, so
-#: changing the selection never repaints the survivors. Validated categorical
-#: order from the data-viz palette.
 SERIES_HUES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
                "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 AGENT_COLOR = {a: SERIES_HUES[i] for i, a in enumerate(ALL_AGENTS)}
@@ -55,7 +52,6 @@ AGENT_COLOR = {a: SERIES_HUES[i] for i, a in enumerate(ALL_AGENTS)}
 METRIC_COLS = ["revenue", "gross_profit", "market_share", "pricing_stability"]
 
 
-# -- config / scenarios ----------------------------------------------------
 def load_config() -> EnvConfig:
     return EnvConfig.load(str(CONFIG_PATH))
 
@@ -71,7 +67,6 @@ def config_key(cfg: EnvConfig) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
-# -- oracle cache ----------------------------------------------------------
 def load_oracle_cache() -> dict:
     if ORACLE_CACHE.exists():
         try:
@@ -97,9 +92,6 @@ def oracle_from_cache(cfg: EnvConfig, seeds: list[int]) -> tuple[list[dict], lis
     return rows, missing
 
 
-# -- running ---------------------------------------------------------------
-#: The key the llm agent actually reads, derived from the default provider so
-#: this can never drift from llm_agent.PROVIDERS again.
 LLM_ENV_VAR = PROVIDERS[DEFAULT_PROVIDER]["env_var"]
 
 
@@ -154,7 +146,6 @@ def summarise(rows: list[dict]) -> pd.DataFrame:
     return res.sort_values("agent", key=lambda s: s.map(order)).reset_index(drop=True)
 
 
-# -- charts ----------------------------------------------------------------
 def ladder_chart(summary: pd.DataFrame):
     import altair as alt
 
@@ -212,7 +203,6 @@ def paths_chart(paths: dict[str, list[float]]):
     return (line + points).properties(height=340)
 
 
-# -- UI --------------------------------------------------------------------
 def main() -> None:
     import streamlit as st
 
@@ -283,8 +273,6 @@ def execute_run(st, cfg: EnvConfig, scenario: Scenario, agents: list[str],
     done = 0
 
     for agent_name in live:
-        # the oracle is deterministic given (config, seed): reuse the committed
-        # cache when the config matches exactly, and say which happened.
         if agent_name == "oracle":
             cached, missing = oracle_from_cache(scenario.config, seeds)
             rows.extend(cached)
@@ -307,7 +295,6 @@ def execute_run(st, cfg: EnvConfig, scenario: Scenario, agents: list[str],
                 paths.update({"oracle": fresh_paths[seeds[0]]}
                              if seeds and seeds[0] in fresh_paths else {})
             if seeds and "oracle" not in paths:
-                # price paths are not cached; one live episode for the path only
                 _, p = run_agent_seeds("oracle", cfg, scenario, [seeds[0]])
                 paths["oracle"] = p[seeds[0]]
                 notes.append("oracle: seed-0 price path computed live "
@@ -323,7 +310,7 @@ def execute_run(st, cfg: EnvConfig, scenario: Scenario, agents: list[str],
         try:
             agent_rows, agent_paths = run_agent_seeds(
                 agent_name, cfg, scenario, seeds, on_step=on_step)
-        except Exception as exc:  # a broken agent must not take the page down
+        except Exception as exc:
             skipped.append((agent_name, f"failed: {exc}"))
             done += 1
             continue

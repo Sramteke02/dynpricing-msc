@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-try:  # Gymnasium is the standard interface; degrade gracefully if absent.
+try:
     import gymnasium as gym
     from gymnasium import spaces
 
@@ -35,7 +35,6 @@ except Exception:  # pragma: no cover - exercised only without gymnasium
 from dynpricing.env.config import EnvConfig
 from dynpricing.env.demand import DemandModel
 
-# Discrete action set: multiplier applied to the current price.
 ACTIONS: tuple[tuple[str, float], ...] = (
     ("hold", 1.00),
     ("raise_5", 1.05),
@@ -56,11 +55,11 @@ class MarketState:
     own_price: float
     competitor_prices: tuple
     unit_cost: float
-    demand_level: float        # last realised units sold (0.0 at reset)
+    demand_level: float
     inventory: int
-    day_of_week: int           # 0=Mon .. 6=Sun
-    day: int                   # step index within the episode
-    season: int                # 0..3 (quarter of the seasonal cycle)
+    day_of_week: int
+    day: int
+    season: int
     horizon: int
     price_min: float
     price_max: float
@@ -84,7 +83,6 @@ class MarketEnv(_GYM_BASE):
 
         if spaces is not None:
             self.action_space = spaces.Discrete(len(ACTIONS))
-            # obs: own_price, comp prices..., demand_level, inventory, dow, season
             low = np.array(
                 [0.0] * (2 + self.cfg.n_competitors) + [0.0, 0.0, 0.0],
                 dtype=np.float32,
@@ -98,7 +96,6 @@ class MarketEnv(_GYM_BASE):
         self._rng = np.random.default_rng()
         self._reset_state()
 
-    # -- internal state -----------------------------------------------------
     def _reset_state(self) -> None:
         self.price = self.cfg.init_price
         self.competitor_prices = list(self.cfg.competitor_init[: self.cfg.n_competitors])
@@ -135,13 +132,12 @@ class MarketEnv(_GYM_BASE):
                float(self.day % 7), float(self._season(self.day))]
         return np.asarray(vec, dtype=np.float32)
 
-    # -- Gymnasium API ------------------------------------------------------
     def reset(self, *, seed: int | None = None, options=None):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
             try:
                 super().reset(seed=seed)
-            except TypeError:  # object base
+            except TypeError:
                 pass
         self._reset_state()
         obs = self._make_obs()
@@ -152,22 +148,18 @@ class MarketEnv(_GYM_BASE):
         if not 0 <= int(action) < len(ACTIONS):
             raise ValueError(f"invalid action {action!r}; expected 0..{len(ACTIONS) - 1}")
 
-        # 1. apply the chosen price move
         _, mult = ACTIONS[int(action)]
         self.price = float(
             np.clip(self.price * mult, self.cfg.price_min, self.cfg.price_max)
         )
 
-        # 2-3. run the demand model and cap by inventory
         demanded = self.demand.sample_units(
             self.price, self.competitor_prices, self.day, self._rng
         )
         units = float(min(demanded, self.inventory))
 
-        # 4. gross-profit reward
         reward = (self.price - self.cfg.unit_cost) * units
 
-        # 5. market share vs competitors (using expected competitor demand)
         comp_units = sum(
             self.demand.expected_units(cp, self.competitor_prices, self.day)
             for cp in self.competitor_prices
@@ -175,19 +167,16 @@ class MarketEnv(_GYM_BASE):
         total = units + comp_units
         market_share = float(units / total) if total > 0 else 0.0
 
-        # 6. update inventory, time, competitors
         self.inventory -= int(round(units))
         self.last_units = units
         self.day += 1
         self._step_competitors()
 
-        # 7. termination
         truncated = self.day >= self.cfg.horizon
         terminated = self.cfg.allow_stockout_termination and self.inventory <= 0
         if self.inventory < 0:
             self.inventory = 0
 
-        # 8. package outputs
         obs = self._make_obs()
         info = {
             "state": self._make_state(),
@@ -200,7 +189,6 @@ class MarketEnv(_GYM_BASE):
         }
         return obs, float(reward), bool(terminated), bool(truncated), info
 
-    # -- competitor dynamics ------------------------------------------------
     def _step_competitors(self) -> None:
         new = []
         for cp in self.competitor_prices:

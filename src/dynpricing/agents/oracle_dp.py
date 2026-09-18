@@ -47,14 +47,10 @@ class BackwardInductionOracle(Agent):
         self._build()
         self._solve()
 
-    # -- discretisation -----------------------------------------------------
     def _build(self) -> None:
         cfg = self.cfg
         r = self.price_decimals
 
-        # exact lattice of prices reachable from the start price, expanded to a
-        # fixpoint so the set is CLOSED under the four actions (no missing
-        # transition targets). The cent grid in [price_min, price_max] is finite.
         start = round(cfg.init_price, r)
         prices = {start}
         frontier = [start]
@@ -71,23 +67,19 @@ class BackwardInductionOracle(Agent):
         self.n_prices = self.prices.size
         idx_of = {float(round(p, r)): i for i, p in enumerate(self.prices)}
 
-        # transition in price-index space for each action (lattice is closed)
         self.trans = np.zeros((len(ACTIONS), self.n_prices), dtype=int)
         for a, (_, m) in enumerate(ACTIONS):
             for i, p in enumerate(self.prices):
                 q = float(round(float(np.clip(p * m, cfg.price_min, cfg.price_max)), r))
                 self.trans[a, i] = idx_of[q]
 
-        # inventory grid
         self.inv_step = cfg.init_inventory / self.inv_buckets
         self.inv_levels = np.linspace(0.0, cfg.init_inventory, self.inv_buckets + 1)
 
-        # expected competitor mean per day (deterministic mean-reversion)
         c0 = float(np.mean(cfg.competitor_init[: cfg.n_competitors]))
         days = np.arange(cfg.horizon)
         self.comp_mean = cfg.ref_price + (c0 - cfg.ref_price) * (1 - cfg.competitor_reversion) ** days
 
-        # expected units table: units at (day, price) using expected demand
         self.units_table = np.zeros((cfg.horizon, self.n_prices), dtype=float)
         for t in range(cfg.horizon):
             cm = [float(self.comp_mean[t])]
@@ -95,12 +87,11 @@ class BackwardInductionOracle(Agent):
                 self.demand.expected_units(p, cm, t) for p in self.prices
             ]
 
-    # -- backward induction -------------------------------------------------
     def _solve(self) -> None:
         cfg = self.cfg
         n_inv = self.inv_levels.size
         cost = cfg.unit_cost
-        inv_col = self.inv_levels[:, None]  # (n_inv, 1)
+        inv_col = self.inv_levels[:, None]
 
         V_next = np.zeros((n_inv, self.n_prices), dtype=float)
         self.policy = np.zeros((cfg.horizon, n_inv, self.n_prices), dtype=np.int8)
@@ -109,10 +100,10 @@ class BackwardInductionOracle(Agent):
             best_val = np.full((n_inv, self.n_prices), -np.inf)
             best_act = np.zeros((n_inv, self.n_prices), dtype=np.int8)
             for a in range(len(ACTIONS)):
-                q_idx = self.trans[a]                       # (n_prices,)
-                q_price = self.prices[q_idx]                # (n_prices,)
-                units_q = self.units_table[t][q_idx]        # (n_prices,)
-                units = np.minimum(units_q[None, :], inv_col)  # (n_inv, n_prices)
+                q_idx = self.trans[a]
+                q_price = self.prices[q_idx]
+                units_q = self.units_table[t][q_idx]
+                units = np.minimum(units_q[None, :], inv_col)
                 reward = (q_price[None, :] - cost) * units
                 inv_next = np.clip(inv_col - units, 0.0, cfg.init_inventory)
                 inv_idx = np.clip(np.round(inv_next / self.inv_step).astype(int),
@@ -130,7 +121,6 @@ class BackwardInductionOracle(Agent):
         self._price_init_idx = int(np.argmin(np.abs(self.prices - cfg.init_price)))
         self.optimal_value = float(self.V[self._inv_init_idx, self._price_init_idx])
 
-    # -- policy execution ---------------------------------------------------
     def act(self, state: MarketState) -> int:
         t = min(state.day, self.cfg.horizon - 1)
         inv_idx = int(np.clip(round(state.inventory / self.inv_step),

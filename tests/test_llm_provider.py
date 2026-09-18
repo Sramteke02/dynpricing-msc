@@ -20,7 +20,6 @@ from dynpricing.agents.llm_agent import (
 from dynpricing.eval.harness import run_episode
 
 
-# -- the offline stub -------------------------------------------------------
 class _Usage:
     prompt_tokens = 321
     completion_tokens = 42
@@ -93,7 +92,6 @@ def _state(cfg):
     return info["state"]
 
 
-# -- provider wiring --------------------------------------------------------
 def test_mistral_is_the_default_provider_and_pins_a_dated_model():
     assert DEFAULT_PROVIDER == "mistral"
     assert DEFAULT_MODEL == PROVIDERS["mistral"]["default_model"]
@@ -136,7 +134,6 @@ def test_seed_sent_for_openai_but_not_mistral(cfg, monkeypatch):
     assert openai._client.chat.completions.calls[0]["seed"] == 0
 
 
-# -- structured output ------------------------------------------------------
 def test_structured_json_is_parsed_and_logged_without_fallback(cfg, monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     reply = json.dumps({"action": 2, "reasoning": "undercut; stock is ample"})
@@ -151,7 +148,7 @@ def test_structured_json_is_parsed_and_logged_without_fallback(cfg, monkeypatch)
     assert entry.model == DEFAULT_MODEL
     assert entry.reasoning == "undercut; stock is ample"
     assert entry.usage["total_tokens"] == 363
-    assert "PERIODS REMAINING" in entry.prompt      # the prompt really was rendered
+    assert "PERIODS REMAINING" in entry.prompt
 
 
 def test_reasoning_model_prose_around_json_still_parses(cfg, monkeypatch):
@@ -165,12 +162,11 @@ def test_reasoning_model_prose_around_json_still_parses(cfg, monkeypatch):
     assert agent.log[-1].used_fallback is False
 
 
-# -- malformed-response fallback -------------------------------------------
 @pytest.mark.parametrize("bad", [
-    "I think we should lower the price a bit.",     # no JSON at all
-    '{"action": 99, "reasoning": "out of range"}',  # out-of-range action
-    '{"reasoning": "no action key"}',               # missing key
-    "",                                             # empty response
+    "I think we should lower the price a bit.",
+    '{"action": 99, "reasoning": "out of range"}',
+    '{"reasoning": "no action key"}',
+    "",
 ])
 def test_malformed_response_falls_back_and_says_why(cfg, monkeypatch, bad):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
@@ -179,10 +175,10 @@ def test_malformed_response_falls_back_and_says_why(cfg, monkeypatch, bad):
     action = agent.act(_state(cfg))
 
     entry = agent.log[-1]
-    assert 0 <= action < len(ACTIONS)          # still a legal action
+    assert 0 <= action < len(ACTIONS)
     assert entry.used_fallback is True
     assert entry.fallback_reason == "unparseable LLM output"
-    assert entry.raw_response == bad           # the raw text is kept for audit
+    assert entry.raw_response == bad
 
 
 def test_non_retryable_error_falls_back_and_records_it(cfg, monkeypatch):
@@ -198,7 +194,6 @@ def test_non_retryable_error_falls_back_and_records_it(cfg, monkeypatch):
     assert "401" in entry.fallback_reason
 
 
-# -- prompt template --------------------------------------------------------
 def test_default_template_states_no_infeasible_unit_quota(cfg):
     """v2 asked for inventory/steps_left units per period — unreachable at any
     price — and the model cut to unit cost chasing it. v3 must not restate it."""
@@ -210,13 +205,10 @@ def test_default_template_states_no_infeasible_unit_quota(cfg):
     assert agent.template_name == DEFAULT_TEMPLATE_NAME == "default_v4"
     assert "units per remaining period" not in prompt
     assert "Even sell-through" not in prompt
-    # v4 keeps v3's fix and adds the explicit comparison
     assert "THE COMPETITOR AVERAGE" in prompt
-    # the pacing *facts* RQ3 needs are still exposed
     assert "Remaining inventory" in prompt
     assert "PERIODS REMAINING" in prompt
     assert "pacing" in prompt.lower()
-    # and v2 stays available so the pair can be compared
     assert "units per remaining period" in TEMPLATES["default_v2"]
 
 
@@ -224,7 +216,6 @@ def test_v4_states_the_competitor_comparison_explicitly():
     """v3 left the comparison to the model, which read 1.97 as 'lower' than 1.00."""
     from dynpricing.env.market_env import MarketState
 
-    # the exact state mis-read on baseline seed 1, day 250
     state = MarketState(own_price=1.00, competitor_prices=(2.01, 1.97),
                         unit_cost=0.84, demand_level=54, inventory=29446,
                         day_of_week=5, day=250, season=2, horizon=365,
@@ -233,10 +224,9 @@ def test_v4_states_the_competitor_comparison_explicitly():
     v3 = LLMAgent(mode="heuristic", template_name="default_v3").render_prompt(state)
     v4 = LLMAgent(mode="heuristic", template_name="default_v4").render_prompt(state)
 
-    assert "BELOW" not in v3                      # v3 leaves it to be inferred
+    assert "BELOW" not in v3
     assert "Competitor average: 1.99" in v4
     assert "-50% (BELOW) THE COMPETITOR AVERAGE" in v4
-    # v4 is otherwise v3: same length bar the one added line
     assert len(v4.splitlines()) == len(v3.splitlines()) + 1
 
 
@@ -268,7 +258,6 @@ def test_v5_states_the_season_without_leaking_the_optimum(cfg):
     assert len(v5.splitlines()) == len(v4.splitlines()) + 1
     assert "SEASONAL DEMAND is currently" in v5
     assert SEASON_STATES[int(state.season)] in v5
-    # it may state the demand state, never the answer
     for banned in ("optimal price", "p*", "should charge", "set price to",
                    "unit_cost", "a0", "elasticity"):
         assert banned not in v5.lower()
@@ -295,7 +284,6 @@ def test_v2_template_still_selectable_for_comparison(cfg):
     assert "units per remaining period" in agent.render_prompt(_state(cfg))
 
 
-# -- rate limiting: retry with backoff --------------------------------------
 def test_429_is_retried_with_exponential_backoff_then_succeeds(cfg, monkeypatch):
     """A rate limit must cost a wait, never a heuristic fallback."""
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
@@ -310,10 +298,10 @@ def test_429_is_retried_with_exponential_backoff_then_succeeds(cfg, monkeypatch)
     action = agent.act(_state(cfg))
 
     assert action == 1
-    assert agent.log[-1].used_fallback is False        # no contamination
+    assert agent.log[-1].used_fallback is False
     assert agent.contaminated is False
     assert agent.n_retries == 2
-    assert slept == [1.0, 2.0]                          # 1s then 2s
+    assert slept == [1.0, 2.0]
     assert len(client.chat.completions.calls) == 3
 
 
@@ -325,7 +313,7 @@ def test_backoff_is_capped(cfg, monkeypatch):
                                     backoff_cap=4.0, strict_llm=False,
                                     sleep=slept.append))
     agent.act(_state(cfg))
-    assert slept == [1.0, 2.0, 4.0, 4.0, 4.0, 4.0]      # capped at 4s
+    assert slept == [1.0, 2.0, 4.0, 4.0, 4.0, 4.0]
 
 
 def test_retry_after_header_is_honoured(cfg, monkeypatch):
@@ -336,7 +324,7 @@ def test_retry_after_header_is_honoured(cfg, monkeypatch):
         client=StubClient([HTTPError(429, retry_after="7"), good]),
         **agent_kwargs(backoff_base=1.0, sleep=slept.append))
     agent.act(_state(cfg))
-    assert slept == [7.0]              # server's number wins over our backoff
+    assert slept == [7.0]
 
 
 def test_5xx_retried_but_4xx_is_not(cfg, monkeypatch):
@@ -347,7 +335,6 @@ def test_5xx_retried_but_4xx_is_not(cfg, monkeypatch):
     ok.act(_state(cfg))
     assert ok.n_retries == 1
 
-    # 401/400 cannot be fixed by waiting: fail immediately, do not burn retries
     bad = LLMAgent(client=StubClient([HTTPError(401, "Invalid API Key")]),
                    **agent_kwargs(strict_llm=False))
     bad.act(_state(cfg))
@@ -365,12 +352,11 @@ def test_calls_are_paced_proactively(cfg, monkeypatch):
     for _ in range(3):
         agent.act(_state(cfg))
 
-    assert agent.n_throttle_waits == 2       # first call is free, then paced
+    assert agent.n_throttle_waits == 2
     assert all(0 < s <= 1.5 for s in slept)
     assert agent.n_retries == 0
 
 
-# -- contamination guard ----------------------------------------------------
 def test_strict_mode_raises_rather_than_contaminating_the_episode(cfg, monkeypatch):
     """CRITICAL: a post-retry fallback must never be silently accepted."""
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
@@ -379,7 +365,7 @@ def test_strict_mode_raises_rather_than_contaminating_the_episode(cfg, monkeypat
 
     with pytest.raises(LLMFallbackError, match="mix heuristic and LLM"):
         agent.act(_state(cfg))
-    assert agent.n_retries == 2               # it really did retry first
+    assert agent.n_retries == 2
 
 
 def test_strict_mode_is_the_default(cfg, monkeypatch):
@@ -413,7 +399,6 @@ def test_heuristic_mode_is_not_contamination(cfg):
     assert agent.usage_summary()["contaminated"] is False
 
 
-# -- end to end through the real harness ------------------------------------
 def test_full_episode_through_the_harness_offline(cfg, monkeypatch):
     """The whole pipeline: harness -> agent -> stub provider -> parse -> action."""
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)

@@ -54,49 +54,25 @@ import numpy as np
 from dynpricing.agents.base import Agent, action_to_reach_price
 from dynpricing.env.market_env import ACTIONS, MarketState
 
-#: Provider registry. Mistral's La Plateforme is OpenAI-compatible, so both
-#: entries drive the same ``chat.completions.create`` call; only these fields
-#: differ. Add a provider by adding a row -- no other code changes.
-#:
-#: ``supports_seed``: OpenAI accepts a ``seed`` request parameter for
-#: best-effort determinism. It is not part of Mistral's chat-completions
-#: schema (Mistral's own SDK calls the equivalent ``random_seed``), so we do
-#: not send it there rather than risk a 422 on every call. Determinism on the
-#: Mistral path therefore rests on ``temperature=0`` plus the response cache.
 PROVIDERS: dict[str, dict] = {
     "mistral": {
         "env_var": "MISTRAL_API_KEY",
         "base_url": "https://api.mistral.ai/v1",
-        # Mistral Large, Dec-2025 snapshot — pinned, matching this project's
-        # reproducibility convention (the `-latest` alias would silently move
-        # under us and break comparability across runs).
-        #
-        # The id is what GET /v1/models actually serves. The docs' model table
-        # renders it as "mistral-large-3-25-12"; that string is rejected by the
-        # API. Verified against the live model list, not the docs.
-        #
-        # Reasoning line: `magistral-small-latest` is served and is the only
-        # Magistral left (the medium tier is retired). It is a *small* model, so
-        # it is not the default; set provider model explicitly to try it for a
-        # chain-of-thought comparison.
         "default_model": "mistral-large-2512",
         "supports_seed": False,
         "docs": "https://docs.mistral.ai/getting-started/models/models_overview/",
     },
     "openai": {
         "env_var": "OPENAI_API_KEY",
-        "base_url": None,          # the SDK's own default
+        "base_url": None,
         "default_model": "gpt-4o-mini-2024-07-18",
         "supports_seed": True,
         "docs": "https://platform.openai.com/docs/models",
     },
 }
 
-#: Default provider. Mistral is the provider this project has access to.
 DEFAULT_PROVIDER = "mistral"
 
-#: Pinned, dated model snapshot for reproducibility. Override via the ``model``
-#: argument (e.g. a larger model) to support the D3 capability comparison.
 DEFAULT_MODEL = PROVIDERS[DEFAULT_PROVIDER]["default_model"]
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -107,10 +83,6 @@ DEFAULT_SYSTEM_PROMPT = (
     "ONLY with a single compact JSON object and nothing else."
 )
 
-#: The default user-prompt template. It deliberately exposes remaining
-#: inventory and periods-left and invites explicit pacing reasoning, which is
-#: essential for RQ3. Treat the template (and its name) as an experimental
-#: variable per D2.
 DEFAULT_USER_TEMPLATE = """You are pricing one product for the next selling period in a competitive market.
 
 Current market state:
@@ -134,23 +106,6 @@ Respond with ONLY this JSON object:
 {{"action": <integer 0-{max_action}>, "reasoning": "<one or two sentences; mention pacing if relevant>"}}
 """
 
-#: v3 — the same prompt as v2 with **one** change: the pacing guidance no longer
-#: states a fixed unit quota.
-#:
-#: Why. v2 printed "Even sell-through to clear stock: about {sell_rate} units per
-#: remaining period", computed as inventory/steps_left with no check that the
-#: market can absorb it. On the calibrated config that asks for ~131 units/period
-#: when linear demand caps at ~79 even priced at cost. Observed effect on
-#: mistral-large-2512, baseline seed 0: the model read "sales far below target"
-#: every period and cut price monotonically from 2.100 to the 0.840 floor by
-#: day ~40, then sat there — 46 of the first 130 days at exactly unit cost, i.e.
-#: zero margin. It was obeying an unsatisfiable instruction.
-#:
-#: v3 keeps the inventory and horizon facts (RQ3 needs them) and asks for
-#: profitable selling without a quota. It deliberately does NOT add advice like
-#: "never price near cost": that would patch the observed failure directly and
-#: over-fit the prompt to one result. Removing the infeasible target is the fix;
-#: if the model still floors, that is a finding about the model.
 USER_TEMPLATE_V3 = """You are pricing one product for the next selling period in a competitive market.
 
 Current market state:
@@ -175,21 +130,6 @@ Respond with ONLY this JSON object:
 {{"action": <integer 0-{max_action}>, "reasoning": "<one or two sentences; mention pacing if relevant>"}}
 """
 
-#: v4 — v3 plus ONE added line: the agent's price stated *relative* to the
-#: competitor average, computed in code.
-#:
-#: Why. v3 lists competitor prices as bare numbers and leaves the comparison to
-#: the model, which repeatedly got it wrong in the same direction. On baseline
-#: seed 1 (56.22% of oracle) it described competitor prices roughly double its
-#: own as "lower" and cut to "improve competitiveness" — e.g. at day 250, own
-#: 1.00 against competitors 2.01/1.97: "Lowering price by 5% improves
-#: competitiveness against lower competitor prices (1.97)". Those spurious cuts
-#: drove the descent (days 20-90: 27 cuts vs 13 raises) and then blocked
-#: recovery: climbing 1.00 -> 1.99 needs 15 consecutive +5% raises, its longest
-#: streak was 6, and one raise+lower pair nets 0.9975 — a slow loss.
-#:
-#: v4 removes the inference rather than instructing the model to do it better.
-#: Nothing else changes, so v3 vs v4 isolates the comparison error.
 USER_TEMPLATE_V4 = USER_TEMPLATE_V3.replace(
     "- Competitor prices: {competitor_prices}\n",
     "- Competitor prices: {competitor_prices}\n"
@@ -197,20 +137,6 @@ USER_TEMPLATE_V4 = USER_TEMPLATE_V3.replace(
     "{price_gap_pct:+.0f}% ({price_gap_word}) THE COMPETITOR AVERAGE.\n",
 )
 
-#: v5 — v4 plus ONE added line: the seasonal demand state in words.
-#:
-#: Why. Under strong_seasonality the true optimum p*(t) swings 1.365-3.321
-#: (sd 0.491), but v4 moved with sd 0.08 and correlated only 0.20/0.56/0.25 with
-#: p*(t) across seeds 7/8/9 — a sixth of the needed amplitude, scoring 88.30%
-#: against gbm_uniform's 95.2% (which correlates 0.66-0.90). The LLM priced at a
-#: sensible static level and ignored the season.
-#:
-#: The prompt already gave it "season index (0-3)" as a bare integer. v5 says
-#: what that integer MEANS, exactly as v4 did for the bare competitor prices:
-#: level relative to average, and direction of travel. It is derived from the
-#: season index already in the state — no demand parameters, no amplitude, and
-#: emphatically no optimal price. If the LLM still does not track, the failure
-#: is not that the seasonal signal was hidden.
 SEASON_STATES = {
     0: "ABOVE AVERAGE and RISING toward the annual peak",
     1: "ABOVE AVERAGE but FALLING back from the annual peak",
@@ -226,34 +152,20 @@ USER_TEMPLATE_V5 = USER_TEMPLATE_V4.replace(
 )
 
 TEMPLATES = {
-    "default_v2": DEFAULT_USER_TEMPLATE,   # kept: the quota version, for contrast
+    "default_v2": DEFAULT_USER_TEMPLATE,
     "default_v3": USER_TEMPLATE_V3,
     "default_v4": USER_TEMPLATE_V4,
     "default_v5": USER_TEMPLATE_V5,
 }
 
-#: Default template. v2 and v3 remain selectable so each pair can be compared as
-#: the experimental variable D2 says the template is.
-#:
-#: Promoted v3 -> v4 on the isolation test: baseline seed 1 went 56.22% -> 95.71%
-#: of oracle from that single added line, and price cuts made while already the
-#: cheapest in the market went 123 -> 0. That test re-ran the seed chosen
-#: *because* it failed, so it establishes the mechanism, not the expected level;
-#: the unbiased mean comes from fresh seeds.
 DEFAULT_TEMPLATE_NAME = "default_v4"
 
 
-#: HTTP statuses worth retrying: rate limiting and transient server faults.
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
-#: Requests-per-minute assumed when the account's real cap cannot be read.
-#: Mistral's free tier serves 4/min; assuming *less* than the truth only costs
-#: time, while assuming more costs 429s.
 FALLBACK_RPM = 4
 
-#: Pace at slightly under the advertised cap rather than exactly at it, so
-#: clock skew between our timer and the server's window cannot tip us over.
 RPM_SAFETY = 1.07
 
 
@@ -325,19 +237,19 @@ class LLMDecision:
     """A fully-auditable record of a single pricing decision."""
 
     day: int
-    mode: str                 # "api" or "heuristic"
+    mode: str
     model: str
     template_name: str
     action: int
     reasoning: str
     used_fallback: bool
-    provider: str = ""        # "mistral" / "openai"; "" for the heuristic
+    provider: str = ""
     system_prompt: str = ""
-    prompt: str = ""          # full rendered user prompt
+    prompt: str = ""
     raw_response: str = ""
     fallback_reason: str = ""
     latency_s: float = 0.0
-    usage: dict | None = None  # token usage, if the API returned it
+    usage: dict | None = None
 
     def to_record(self) -> dict:
         return asdict(self)
@@ -434,7 +346,6 @@ class LLMAgent(Agent):
         elif self.mode == "api":
             self._client = self._init_client_strict(api_key)
 
-    # -- client setup -------------------------------------------------------
     def _init_client_strict(self, api_key: str | None):
         """Build the provider's client or fail loudly with an actionable message.
 
@@ -488,7 +399,6 @@ class LLMAgent(Agent):
         """
         return self.mode == "api" and self.fallback_count > 0
 
-    # -- prompt rendering ---------------------------------------------------
     def _action_menu(self) -> str:
         lines = []
         for idx, (label, mult) in enumerate(ACTIONS):
@@ -501,8 +411,6 @@ class LLMAgent(Agent):
     def render_prompt(self, state: MarketState) -> str:
         steps_left = max(0, state.horizon - state.day)
         sell_rate = state.inventory / max(1, steps_left)
-        # computed here, not left to the model: v3 and earlier listed bare
-        # competitor prices and the model repeatedly misread the direction.
         comp_mean = state.competitor_mean
         gap_pct = ((state.own_price / comp_mean - 1.0) * 100.0
                    if comp_mean > 0 else 0.0)
@@ -530,7 +438,6 @@ class LLMAgent(Agent):
             max_action=len(ACTIONS) - 1,
         )
 
-    # -- decision -----------------------------------------------------------
     def _cache_key(self, state: MarketState) -> str:
         return json.dumps([
             round(state.own_price, 2),
@@ -545,7 +452,6 @@ class LLMAgent(Agent):
             key = self._cache_key(state)
             if key in self._cache:
                 cached = self._cache[key]
-                # log a copy so repeated states are still represented in the log
                 replay = LLMDecision(**{**cached.to_record(), "day": state.day})
                 self.log.append(replay)
                 return replay.action
@@ -583,8 +489,6 @@ class LLMAgent(Agent):
             d = self._heuristic(state, reason=f"LLM call error: {exc}")
             d.prompt, d.latency_s = prompt, time.perf_counter() - t0
 
-        # Single exit for every api-mode fallback. Retries are already spent by
-        # here, so this is a genuine contamination of the episode.
         if self.strict_llm:
             raise LLMFallbackError(
                 f"LLM decision fell back to the heuristic at day {state.day} "
@@ -596,7 +500,6 @@ class LLMAgent(Agent):
             )
         return d
 
-    # -- rate limiting ------------------------------------------------------
     @staticmethod
     def _status_of(exc: Exception) -> int | None:
         """HTTP status behind an SDK exception, if there is one."""
@@ -615,9 +518,8 @@ class LLMAgent(Agent):
         status = self._status_of(exc)
         if status in RETRYABLE_STATUS:
             return True
-        if status is not None:            # a definite 4xx we cannot fix by waiting
+        if status is not None:
             return False
-        # no status at all: connection reset, timeout, DNS blip
         text = str(exc).lower()
         return any(t in text for t in
                    ("timeout", "timed out", "connection", "temporarily", "rate limit"))
@@ -691,8 +593,6 @@ class LLMAgent(Agent):
             ],
             response_format={"type": "json_object"},
         )
-        # `seed` is OpenAI-only; Mistral's schema has no such field and would
-        # reject it, so it is omitted rather than sent hopefully.
         if self.request_seed is not None and self.provider_config["supports_seed"]:
             kwargs["seed"] = self.request_seed
         resp = self._client.chat.completions.create(**kwargs)
@@ -725,13 +625,11 @@ class LLMAgent(Agent):
                 return a, content.strip()[:200]
         return None, content.strip()[:200]
 
-    # -- transparent heuristic (explicit, logged) --------------------------
     def _heuristic(self, state: MarketState, reason: str) -> LLMDecision:
         """A simple, explainable margin/volume/pacing rule. Always logged."""
         floor = state.unit_cost * 1.3
         target = max(floor, 0.5 * state.competitor_mean + 0.5 * state.own_price)
         steps_left = max(1, state.horizon - state.day)
-        # lean higher when inventory is scarce relative to remaining demand
         if state.inventory < 0.1 * max(state.demand_level, 1) * steps_left:
             target *= 1.05
         action = action_to_reach_price(state, target)
@@ -742,7 +640,6 @@ class LLMAgent(Agent):
             used_fallback=True, fallback_reason=reason,
         )
 
-    # -- analysis / audit helpers ------------------------------------------
     def reasoning_log(self) -> list[dict]:
         return [
             {"day": d.day, "mode": d.mode, "action": d.action,

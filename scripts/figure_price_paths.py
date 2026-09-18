@@ -48,7 +48,6 @@ from dynpricing.eval.harness import default_scenarios, run_episode  # noqa: E402
 
 SCENARIO = "strong_seasonality"
 REPLAYED = ("oracle", "gbm_uniform", "fixed")
-#: Seeds with a committed LLM episode under *both* prompt versions.
 SEEDS_WITH_BOTH_PROMPTS = (7, 8, 9)
 PROFIT_TOL = 1e-6
 
@@ -57,7 +56,6 @@ METRICS = ROOT / "results" / "gbm_uniform" / "metrics.csv"
 OUT = ROOT / "results" / "figures" / "price_paths_strong_seasonality.png"
 
 
-# --------------------------------------------------------------------------
 def committed_profits(seed: int) -> dict[str, float]:
     """Gross profit per agent for this seed/scenario, as committed."""
     with METRICS.open() as fh:
@@ -80,8 +78,6 @@ def replay(seed: int) -> dict[str, np.ndarray]:
     for name in REPLAYED:
         agent = build_agent(name, scenario.config, seed=seed)
         if getattr(agent, "requires_training", False):
-            # Training agents are fitted on the *baseline* config, as in the
-            # evaluation harness — they never see the scenario's demand.
             agent.train(make_env=lambda: MarketEnv(cfg), seed=seed)
         m = run_episode(agent, scenario.make_env(), seed=seed, scenario=SCENARIO)
 
@@ -114,7 +110,6 @@ def charged(prices: np.ndarray) -> np.ndarray:
     return prices[1:]
 
 
-# --------------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--seed", type=int, default=7, choices=SEEDS_WITH_BOTH_PROMPTS,
@@ -125,8 +120,6 @@ def main() -> None:
     print(f"Replaying non-LLM agents for {SCENARIO}, seed {seed} (no API calls):")
     rp = replay(seed)
 
-    # (label, path, linestyle, grey level, linewidth) — greyscale only, so the
-    # line style carries the identity and the figure prints in black and white.
     series = [
         ("Optimal price $p^*(t)$ (oracle)", charged(rp["oracle"]),
          "-", "0.00", 1.7),
@@ -146,7 +139,7 @@ def main() -> None:
     print(f"\nCaption statistics, {SCENARIO} seed {seed} (365 charged prices):")
     print(f"  {'series':34s}{'sd':>9s}{'corr with p*':>14s}")
     for label, y, *_ in series:
-        flat = np.ptp(y) == 0.0  # a constant path has no defined correlation
+        flat = np.ptp(y) == 0.0
         sd = 0.0 if flat else float(np.std(y, ddof=1))
         corr = "undefined" if flat else f"{np.corrcoef(y, star)[0, 1]:.4f}"
         print(f"  {label:34s}{sd:9.4f}{corr:>14s}")
@@ -173,7 +166,6 @@ def main() -> None:
         ax.spines[side].set_linewidth(0.8)
     ax.tick_params(colors="0.35", labelcolor="0.20", length=3, width=0.8)
 
-    # Lower left is the one region every path leaves empty on these seeds.
     leg = ax.legend(loc="lower left", frameon=True, framealpha=1.0, fontsize=8.5,
                     borderpad=0.6, labelspacing=0.5, handlelength=3.4, ncol=2,
                     columnspacing=1.6)
@@ -187,7 +179,7 @@ def main() -> None:
              fontsize=8, color="0.35", ha="left")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT, dpi=200, facecolor="white")  # no bbox_inches: keep 9 x 4.5 in
+    fig.savefig(OUT, dpi=200, facecolor="white")
     print(f"\n[ok] wrote {OUT.relative_to(ROOT)}")
 
 

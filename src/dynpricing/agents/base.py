@@ -40,7 +40,6 @@ class Agent(ABC):
     """Base class for all pricing agents."""
 
     name: str = "agent"
-    #: whether the runner should call :meth:`learn` before evaluation
     requires_training: bool = False
 
     def reset(self, state: MarketState) -> None:

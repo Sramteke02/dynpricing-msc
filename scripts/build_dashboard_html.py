@@ -31,11 +31,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "results" / "dashboard" / "index.html"
 
-# canonical ladder order; gbm_uniform sits next to the agent it is a control for
 AGENT_ORDER = ["fixed", "cost_plus", "competitor_match", "random",
                "gbm", "gbm_uniform", "llm", "oracle"]
 
-PALETTE = {  # validated slots 1-3, light / dark (see dataviz palette.md)
+PALETTE = {
     "light": {"s1": "#2a78d6", "s2": "#eb6834", "s3": "#1baf7a"},
     "dark": {"s1": "#3987e5", "s2": "#d95926", "s3": "#199e70"},
 }
@@ -45,7 +44,6 @@ def read_json(path: Path):
     return json.loads(path.read_text()) if path.exists() else None
 
 
-# -- run provenance --------------------------------------------------------
 def config_provenance() -> dict | None:
     """The config the runs were produced under, plus a content fingerprint."""
     cfg = read_json(ROOT / "configs" / "calibrated.json")
@@ -121,7 +119,6 @@ def check_run_compatibility() -> dict | None:
     }
 
 
-# -- ladder ----------------------------------------------------------------
 def build_ladder(compat: dict | None) -> tuple[dict, list[str]]:
     """Merge the committed aggregated runs into {scenario: [agent rows]}.
 
@@ -173,7 +170,6 @@ def build_ladder(compat: dict | None) -> tuple[dict, list[str]]:
     return by_scenario, notes
 
 
-# -- KPI tiles -------------------------------------------------------------
 def _seed_range(seeds: list[int]) -> str:
     """"7-9" for a contiguous run, else "0, 3, 7"."""
     if len(seeds) > 1 and seeds == list(range(seeds[0], seeds[-1] + 1)):
@@ -181,7 +177,6 @@ def _seed_range(seeds: list[int]) -> str:
     return ", ".join(str(s) for s in seeds)
 
 
-#: Prompt templates oldest-first; the last one present is the current prompt.
 PROMPT_ORDER = ("default_v3", "default_v4", "default_v5")
 
 
@@ -211,7 +206,7 @@ def build_rq2() -> dict | None:
     skipped = 0
     for path in files:
         if path.stem.endswith("_partial"):
-            continue  # a partial file is a crash artefact, not a finished episode
+            continue
         ep = read_json(path)
         if not ep or "prices" not in ep:
             continue
@@ -237,12 +232,10 @@ def build_rq2() -> dict | None:
         seeds = sorted(e["seed"] for e in eps)
         mean = lambda vals: sum(vals) / len(vals)  # noqa: E731
 
-        # The episode files record the oracle they were scored against. It must
-        # agree with the committed sweep, or the two are not the same experiment.
         oracle_committed = [ref[("oracle", scenario)][s] for s in seeds
                             if s in ref.get(("oracle", scenario), {})]
         if len(oracle_committed) != len(seeds):
-            continue  # no committed baseline for these seeds; nothing to compare to
+            continue
         if any(abs(e["oracle_gross_profit"] - ref[("oracle", scenario)][e["seed"]]) > 1e-6
                for e in eps):
             oracle_mismatch = True
@@ -336,10 +329,8 @@ def build_kpis(ladder: dict, paired: list | None, rq2: dict | None) -> list[dict
                       "value": None, "empty": "not yet run — no baseline rows for "
                       "gbm and gbm_uniform in the committed results."})
 
-    # The LLM is rate-limited and never joined the 30-seed sweep, so RQ2 comes
-    # from the per-episode files, not from the ladder.
     if rq2:
-        head = rq2["rows"][-1]  # the current prompt
+        head = rq2["rows"][-1]
         gap = (head["llm"] - head["gbm_uniform"]
                if head["gbm_uniform"] is not None else None)
         sub = (f"{head['model']} · prompt {head['prompt']} · "
@@ -367,7 +358,6 @@ def build_kpis(ladder: dict, paired: list | None, rq2: dict | None) -> list[dict
     return tiles
 
 
-# -- amplitude sweep -------------------------------------------------------
 def build_amplitude() -> dict | None:
     summary = read_json(ROOT / "results" / "seasonal_sweep" / "summary.json")
     if not summary:
@@ -386,15 +376,12 @@ def build_amplitude() -> dict | None:
             for name in ("fixed", "gbm", "gbm_uniform", "oracle")
             if name in summary.get("mean_profit", {})
         },
-        # position-aligned lists, not float-keyed dicts: JS String(0.0) is "0",
-        # which would not match a "0.0" key
         "gap": [summary["gbm_uniform_minus_fixed"][f"{a}"] for a in amps],
         "dispersion": [summary.get("optimal_price_dispersion", {}).get(f"{a}")
                        for a in amps],
     }
 
 
-# -- price paths -----------------------------------------------------------
 def build_paths() -> dict | None:
     paths = read_json(ROOT / "results" / "gbm_uniform" / "price_paths.json")
     if not paths or "gbm" not in paths or "gbm_uniform" not in paths:
@@ -421,7 +408,6 @@ def build_paths() -> dict | None:
     return out
 
 
-# -- page ------------------------------------------------------------------
 def render(data: dict) -> str:
     payload = json.dumps(data, indent=None, separators=(",", ":"))
     css = CSS.replace("__L1__", PALETTE["light"]["s1"]) \

@@ -97,7 +97,6 @@ class GradientBoostingAgent(Agent):
         self.backend = None
         self._trained = False
 
-    # -- Stage 1: collect interaction data and fit -------------------------
     def train(self, make_env, n_episodes: int | None = None,
               seed: int | None = None) -> "GradientBoostingAgent":
         """Collect interaction data with exploratory pricing, then fit demand."""
@@ -112,15 +111,13 @@ class GradientBoostingAgent(Agent):
             state = info["state"]
             done = False
             while not done:
-                action = int(rng.integers(0, len(ACTIONS)))  # explore
-                # record the price we are about to realise
+                action = int(rng.integers(0, len(ACTIONS)))
                 _, mult = ACTIONS[action]
                 realised_price = float(np.clip(
                     state.own_price * mult, state.price_min, state.price_max
                 ))
                 feats = state_price_features(state, realised_price)
                 _, _, terminated, truncated, info = env.step(action)
-                # demanded (uncensored by inventory) is the cleanest target
                 y.append(float(info["demanded"]))
                 X.append(feats)
                 state = info["state"]
@@ -133,7 +130,6 @@ class GradientBoostingAgent(Agent):
         self._trained = True
         return self
 
-    # -- Stage 2: predict-then-optimise ------------------------------------
     def _predict_units(self, state: MarketState, price: float) -> float:
         feats = np.asarray([state_price_features(state, price)], dtype=float)
         pred = float(self.model.predict(feats)[0])

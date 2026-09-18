@@ -20,7 +20,7 @@ class FixedPriceAgent(Agent):
     name = "fixed"
 
     def act(self, state: MarketState) -> int:
-        return 0  # "hold"
+        return 0
 
 
 class CostPlusAgent(Agent):
@@ -42,7 +42,7 @@ class CompetitorMatchingAgent(Agent):
     name = "competitor_match"
 
     def __init__(self, undercut: float = 0.0):
-        self.undercut = float(undercut)  # e.g. 0.02 = undercut by 2%
+        self.undercut = float(undercut)
 
     def act(self, state: MarketState) -> int:
         target = state.competitor_mean * (1.0 - self.undercut)
@@ -58,7 +58,6 @@ class RandomAgent(Agent):
         self._rng = np.random.default_rng(seed)
 
     def reset(self, state: MarketState) -> None:
-        # keep behaviour reproducible per-episode if reset with a seed elsewhere
         pass
 
     def act(self, state: MarketState) -> int:
@@ -106,9 +105,8 @@ class OracleAgent(Agent):
             static_opt, state.competitor_prices, state.day
         )
         if units_at_static <= target_rate:
-            return static_opt  # inventory is not binding
+            return static_opt
 
-        # inventory binds: raise price until expected demand <= sell-through rate
         prices = np.linspace(static_opt, state.price_max, self.grid)
         for p in prices:
             if self.demand.expected_units(p, state.competitor_prices, state.day) <= target_rate:
@@ -117,7 +115,6 @@ class OracleAgent(Agent):
 
     def act(self, state: MarketState) -> int:
         target = self._target_price(state)
-        # among reachable moves, choose the one landing nearest the target price
         best_idx, best_err = 0, float("inf")
         for idx, (_, mult) in enumerate(ACTIONS):
             price = float(np.clip(

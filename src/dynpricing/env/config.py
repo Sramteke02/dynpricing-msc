@@ -21,42 +21,35 @@ class EnvConfig:
     available.
     """
 
-    # --- Pricing structure -------------------------------------------------
-    ref_price: float = 10.0          # reference/anchor price (currency units)
-    unit_cost: float = 4.0           # marginal cost per unit
-    price_min: float = 5.0           # lowest allowed price
-    price_max: float = 20.0          # highest allowed price
-    init_price: float = 10.0         # opening price at reset
+    ref_price: float = 10.0
+    unit_cost: float = 4.0
+    price_min: float = 5.0
+    price_max: float = 20.0
+    init_price: float = 10.0
 
-    # --- Demand model (linear, differentiated Bertrand) --------------------
-    base_demand: float = 120.0       # q_ref: expected units/day at ref price, neutral season
-    a0: float = 288.0                # demand intercept (units at p=0, cbar=0, neutral season)
-    b: float = 24.0                  # own-price sensitivity: dq/dp = -b
-    d: float = 7.2                   # cross-price sensitivity: dq/dcbar = +d
-    noise_cv: float = 0.10           # coefficient of variation of multiplicative demand noise
+    base_demand: float = 120.0
+    a0: float = 288.0
+    b: float = 24.0
+    d: float = 7.2
+    noise_cv: float = 0.10
 
-    # --- Competition -------------------------------------------------------
     n_competitors: int = 2
     competitor_init: tuple = (10.0, 10.5)
-    competitor_drift: float = 0.02   # std of competitor random-walk (relative)
-    competitor_reversion: float = 0.10  # pull back toward ref_price each step
+    competitor_drift: float = 0.02
+    competitor_reversion: float = 0.10
 
-    # --- Seasonality / calendar -------------------------------------------
-    horizon: int = 365              # selling horizon (days): a full seasonal cycle
-    seasonal_amplitude: float = 0.25  # annual sinusoid amplitude on demand
-    weekend_uplift: float = 0.15      # extra demand on weekends
-    holiday_uplift: float = 0.40      # extra demand on modelled holidays
-    holiday_days: tuple = ()          # day-of-episode indices treated as holidays
-    start_day_of_year: int = 0        # phase of the annual seasonal cycle
+    horizon: int = 365
+    seasonal_amplitude: float = 0.25
+    weekend_uplift: float = 0.15
+    holiday_uplift: float = 0.40
+    holiday_days: tuple = ()
+    start_day_of_year: int = 0
 
-    # --- Inventory ---------------------------------------------------------
-    init_inventory: int = 48000     # slack over a 365-day horizon (scarce x0.3 still binds)
+    init_inventory: int = 48000
     allow_stockout_termination: bool = True
 
-    # --- MDP ---------------------------------------------------------------
     discount: float = 0.99
 
-    # --- Provenance --------------------------------------------------------
     calibration_notes: str = "synthetic defaults"
     calibration_sources: tuple = ()
 
@@ -70,7 +63,6 @@ class EnvConfig:
         if self.horizon <= 0:
             raise ValueError("horizon must be positive")
 
-    # --- Serialisation -----------------------------------------------------
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -81,7 +73,6 @@ class EnvConfig:
 
     @classmethod
     def from_dict(cls, data: dict) -> "EnvConfig":
-        # tuples survive JSON as lists; coerce the fields we declared as tuples
         tuple_fields = {
             "competitor_init",
             "holiday_days",

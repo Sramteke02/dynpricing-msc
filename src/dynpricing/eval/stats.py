@@ -74,10 +74,10 @@ class PairedResult:
     n_pairs: int
     mean_a: float
     mean_b: float
-    mean_diff: float          # a - b
+    mean_diff: float
     ci_low: float
     ci_high: float
-    significant: bool         # 95% CI excludes 0
+    significant: bool
     winner: str
 
     def to_dict(self) -> dict:
@@ -106,7 +106,7 @@ def paired_comparison(
 
     da = np.array([a[s][metric] for s in common], dtype=float)
     db = np.array([b[s][metric] for s in common], dtype=float)
-    diff = da - db  # matched per seed
+    diff = da - db
 
     mean_diff, lo, hi, _ = bootstrap_mean_ci(diff, n_boot=n_boot, seed=seed)
     significant = (lo > 0) or (hi < 0)

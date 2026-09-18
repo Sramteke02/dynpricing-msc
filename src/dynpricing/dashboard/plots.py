@@ -12,10 +12,9 @@ from pathlib import Path
 import numpy as np
 
 import matplotlib
-matplotlib.use("Agg")  # headless-safe
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-# canonical display order matching the proposal's ladder
 _ORDER = ["fixed", "cost_plus", "competitor_match", "random", "gbm", "llm", "oracle"]
 _HIGHLIGHT = {"gbm", "llm"}
 
@@ -41,7 +40,6 @@ def build_dashboard(
     if df.empty:
         raise ValueError("no rows to plot (check the scenario filter)")
 
-    # Bootstrap means + 95% CIs (Task 3), and the paired GBM-vs-LLM result.
     from dynpricing.eval.stats import summarize, paired_comparison, resolve_agent_name
 
     rows = df.to_dict("records")
@@ -67,7 +65,6 @@ def build_dashboard(
         title += f"  —  scenario: {scenario}"
     fig.suptitle(title, fontsize=15, fontweight="bold")
 
-    # --- bar chart: total gross profit per agent (with 95% CI error bars) --
     oracle_profit = None
     oracle_rows = agg[agg["agent"].str.startswith("oracle")]
     if not oracle_rows.empty:
@@ -90,7 +87,6 @@ def build_dashboard(
     ax_bar.set_ylabel("mean gross profit")
     ax_bar.tick_params(axis="x", rotation=45, labelsize=8)
 
-    # --- line chart: price over a season ----------------------------------
     ax_line.set_title("Price over a season")
     ax_line.set_xlabel("day")
     ax_line.set_ylabel("price")
@@ -106,7 +102,6 @@ def build_dashboard(
                      ha="center", va="center", transform=ax_line.transAxes,
                      color="grey")
 
-    # --- metrics table (means with 95% CIs) -------------------------------
     ax_table.axis("off")
     cell_text = []
     for _, r in agg.iterrows():

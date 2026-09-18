@@ -40,10 +40,9 @@ def test_pricing_stability_metric():
 
 
 def test_calibration_synthetic_fallback(tmp_path):
-    result = calibrate(tmp_path)  # empty dir -> defaults
+    result = calibrate(tmp_path)
     assert result.sources_used == []
     assert isinstance(result.config, EnvConfig)
-    # round-trips through disk
     out = tmp_path / "cfg.json"
     result.config.save(out)
     loaded = EnvConfig.load(out)
@@ -54,7 +53,6 @@ def test_calibration_from_synthetic_uci(tmp_path):
     import pandas as pd
     import numpy as np
 
-    # build a tiny synthetic "UCI" file with a real price->qty relationship
     rng = np.random.default_rng(0)
     price = rng.uniform(2, 20, size=5000)
     qty = np.maximum(1, (300 * price ** -1.5 * rng.lognormal(0, 0.2, size=5000))).round()
@@ -63,8 +61,6 @@ def test_calibration_from_synthetic_uci(tmp_path):
 
     result = calibrate(tmp_path)
     assert "UCI Online Retail II" in result.sources_used
-    # price sensitivity b is SET to match a literature elasticity (eps_target),
-    # NOT measured from the data; the implied elasticity at p_ref equals it.
     cfg = result.config
     implied = cfg.b * cfg.ref_price / cfg.base_demand
     assert implied == pytest.approx(2.0, rel=1e-3)

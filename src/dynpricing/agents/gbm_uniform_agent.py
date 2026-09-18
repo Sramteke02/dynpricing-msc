@@ -47,10 +47,8 @@ from dynpricing.agents.base import Agent
 from dynpricing.agents.gbm_agent import _build_regressor, state_price_features
 from dynpricing.env.market_env import ACTIONS, MarketState
 
-#: index of the multiplier-1.0 action; issued after setting an exploration price
 HOLD_ACTION = next(i for i, (_, mult) in enumerate(ACTIONS) if mult == 1.0)
 
-#: tolerance when comparing a candidate price against the recorded training max
 _CLAMP_TOL = 1e-9
 
 
@@ -74,19 +72,16 @@ class UniformExplorationGBMAgent(Agent):
         self.backend = None
         self._trained = False
 
-        # -- training-coverage diagnostics (change 1) ----------------------
         self.train_price_min: float | None = None
         self.train_price_max: float | None = None
         self.band_min: float | None = None
         self.band_max: float | None = None
         self.n_train_rows = 0
 
-        # -- clamp diagnostics (change 2) ----------------------------------
         self.n_decisions = 0
-        self.n_clamp_binds = 0          # clamp changed the chosen action
-        self.n_candidates_excluded = 0  # candidate prices ruled out by the clamp
+        self.n_clamp_binds = 0
+        self.n_candidates_excluded = 0
 
-    # -- Stage 1: collect interaction data and fit -------------------------
     def train(self, make_env, n_episodes: int | None = None,
               seed: int | None = None) -> "UniformExplorationGBMAgent":
         """Collect interaction data with band-wide exploration, then fit demand."""
@@ -105,14 +100,11 @@ class UniformExplorationGBMAgent(Agent):
                 realised_price, action = self._explore(env, state, rng)
                 feats = state_price_features(state, realised_price)
                 _, _, terminated, truncated, info = env.step(action)
-                # the price the environment actually realised must match the one
-                # we featurised, or the training targets are mislabelled
                 if abs(float(info["price"]) - realised_price) > 1e-6:
                     raise RuntimeError(
                         "exploration price was not realised by the environment: "
                         f"expected {realised_price:.6f}, got {info['price']:.6f}"
                     )
-                # demanded (uncensored by inventory) is the cleanest target
                 y.append(float(info["demanded"]))
                 X.append(feats)
                 prices.append(realised_price)
@@ -153,10 +145,9 @@ class UniformExplorationGBMAgent(Agent):
                 "uniform exploration needs to set the environment price directly; "
                 f"{type(env).__name__} has no 'price' attribute"
             )
-        env.price = price  # realised verbatim by the hold action
+        env.price = price
         return price, HOLD_ACTION
 
-    # -- Stage 2: predict-then-optimise ------------------------------------
     def _predict_units(self, state: MarketState, price: float) -> float:
         feats = np.asarray([state_price_features(state, price)], dtype=float)
         pred = float(self.model.predict(feats)[0])
@@ -177,7 +168,7 @@ class UniformExplorationGBMAgent(Agent):
             price = float(np.clip(state.own_price * mult,
                                   state.price_min, state.price_max))
             profit = (price - state.unit_cost) * self._predict_units(state, price)
-            if profit > raw_profit:  # what the unclamped optimiser would pick
+            if profit > raw_profit:
                 raw_idx, raw_profit = idx, profit
             if price < cheapest_price:
                 cheapest_idx, cheapest_price = idx, price
@@ -189,15 +180,12 @@ class UniformExplorationGBMAgent(Agent):
 
         self.n_decisions += 1
         if best_idx is None:
-            # every reachable price sits above the training range: retreat to
-            # the lowest reachable price rather than extrapolate.
             self.n_clamp_binds += 1
             return cheapest_idx
         if best_idx != raw_idx:
             self.n_clamp_binds += 1
         return best_idx
 
-    # -- diagnostics -------------------------------------------------------
     def coverage_report(self) -> str:
         """Human-readable summary of what the training data covers."""
         if not self._trained:

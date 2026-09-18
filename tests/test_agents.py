@@ -29,7 +29,6 @@ def test_fixed_agent_holds_price(cfg):
     agent = build_agent("fixed", cfg)
     env = MarketEnv(cfg)
     m = run_episode(agent, env, seed=0)
-    # holding from a constant start => flat price path => zero stability metric
     assert m.pricing_stability == pytest.approx(0.0, abs=1e-9)
 
 
@@ -67,7 +66,7 @@ def test_gbm_trains_and_beats_random(cfg):
                    evaluate_agent("gbm", cfg, scen, seeds,
                                   agent_kwargs={"exploration_episodes": 15})])
     rnd = np.mean([m.gross_profit for m in evaluate_agent("random", cfg, scen, seeds)])
-    assert gbm > rnd  # a learned demand model should beat random pricing
+    assert gbm > rnd
 
 
 def test_gbm_uniform_training_spans_the_price_band(cfg):
@@ -91,12 +90,12 @@ def test_gbm_uniform_never_prices_above_its_training_range(cfg):
 
     agent = UniformExplorationGBMAgent(seed=0, uniform_exploration=False)
     agent.train(make_env=lambda: MarketEnv(cfg), n_episodes=5, seed=0)
-    assert agent.train_price_max < cfg.price_max  # otherwise the test is vacuous
+    assert agent.train_price_max < cfg.price_max
 
     env = MarketEnv(cfg)
     m = run_episode(agent, env, seed=0)
     assert max(m.prices[1:]) <= agent.train_price_max + 1e-9
-    assert agent.n_clamp_binds > 0  # the clamp actually bound
+    assert agent.n_clamp_binds > 0
 
 
 def test_gbm_uniform_beats_random(cfg):
@@ -132,9 +131,7 @@ def test_llm_fallback_runs_without_key(cfg):
 def test_llm_parse_structured_output():
     action, reasoning = LLMAgent._parse('{"action": 2, "reasoning": "undercut"}')
     assert action == 2 and reasoning == "undercut"
-    # tolerate surrounding prose
     action, _ = LLMAgent._parse('Sure! {"action": 1, "reasoning": "raise"} done')
     assert action == 1
-    # invalid -> None so the caller can fall back
     action, _ = LLMAgent._parse("no json here")
     assert action is None

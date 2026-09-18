@@ -13,7 +13,6 @@ from dynpricing.eval.harness import run_episode
 
 @pytest.fixture
 def cfg():
-    # small problem so the DP solves quickly in tests
     return EnvConfig(horizon=30, init_inventory=4000)
 
 
@@ -41,4 +40,4 @@ def test_fluid_and_dp_oracles_agree(cfg):
     fl_p = np.mean([run_episode(OracleAgent(DemandModel(cfg)), MarketEnv(cfg), seed=s).gross_profit
                     for s in seeds])
     rel_gap = abs(fl_p - dp_p) / dp_p
-    assert rel_gap < 0.05  # agree within 5%
+    assert rel_gap < 0.05

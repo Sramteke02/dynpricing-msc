@@ -59,7 +59,6 @@ class DemandModel:
                 f"unit_cost={cfg.unit_cost}, ref_price={cfg.ref_price})."
             )
 
-    # -- calendar effects ---------------------------------------------------
     def seasonal_factor(self, day: int) -> float:
         """Annual seasonal multiplier (sinusoidal), centred on 1.0."""
         phase = (self.cfg.start_day_of_year + day) / 365.0 * 2.0 * math.pi
@@ -69,13 +68,12 @@ class DemandModel:
         """Combined weekday/weekend and holiday multiplier, centred on 1.0."""
         dow = day % 7
         factor = 1.0
-        if dow >= 5:  # Saturday/Sunday
+        if dow >= 5:
             factor += self.cfg.weekend_uplift
         if day in set(self.cfg.holiday_days):
             factor += self.cfg.holiday_uplift
         return factor
 
-    # -- core demand --------------------------------------------------------
     def intercept(self, competitor_prices, day: int) -> float:
         """The time-varying linear intercept a(t) = a0*S(t)*C(t) + d*cbar(t)."""
         comp = np.asarray(competitor_prices, dtype=float)
@@ -111,13 +109,11 @@ class DemandModel:
         mean = self.expected_units(price, competitor_prices, day)
         if mean <= 0 or self.cfg.noise_cv <= 0:
             return mean
-        # log-normal multiplier with unit mean and CV = noise_cv
         sigma = math.sqrt(math.log(1.0 + self.cfg.noise_cv ** 2))
         mu = -0.5 * sigma ** 2
         noise = float(rng.lognormal(mean=mu, sigma=sigma))
         return float(max(mean * noise, 0.0))
 
-    # -- helpers for the oracle / optimum ----------------------------------
     def expected_profit(
         self,
         price: float,

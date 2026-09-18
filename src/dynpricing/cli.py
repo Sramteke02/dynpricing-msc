@@ -35,7 +35,6 @@ from dynpricing.eval.harness import (
 from dynpricing.eval.metrics import aggregate
 
 
-# --------------------------------------------------------------------------
 def _load_cfg(path: str | None) -> EnvConfig:
     if path and Path(path).exists():
         return EnvConfig.load(path)
@@ -54,7 +53,6 @@ def _resolve_agents(spec: str) -> list[str]:
     return names
 
 
-# --------------------------------------------------------------------------
 _REQUIRED_DATA = {
     "UCI Online Retail II (CC BY 4.0)":
         "data/online_retail_II.xlsx  (or online_retail_II.csv)",
@@ -138,7 +136,6 @@ def cmd_run(args) -> None:
     metrics_csv = out_dir / "metrics.csv"
     df.to_csv(metrics_csv, index=False)
 
-    # Task 3: means with bootstrap 95% CIs, and paired (by-seed) comparisons.
     from dynpricing.eval.stats import summarize, paired_comparison, resolve_agent_name
 
     summ = summarize(rows)
@@ -148,7 +145,6 @@ def cmd_run(args) -> None:
     (out_dir / "paired_comparisons.json").write_text(json.dumps(paired, indent=2))
     agg = summ
 
-    # Save representative price paths (baseline scenario, seed 0) for plotting.
     if args.save_paths:
         paths = _collect_price_paths(cfg, agents, agent_kwargs=agent_kwargs)
         (out_dir / "price_paths.json").write_text(json.dumps(paths, indent=2))
@@ -200,7 +196,6 @@ def cmd_llm_smoke(args) -> None:
         _llm_dry_render(cfg, args)
         return
 
-    # Real path: api mode (with key) or explicit heuristic mode.
     agent = LLMAgent(model=args.model, mode=args.mode, temperature=args.temperature,
                      provider=getattr(args, "provider", None) or DEFAULT_PROVIDER)
     env = MarketEnv(cfg)
@@ -253,8 +248,6 @@ def _llm_dry_render(cfg, args) -> None:
     """
     from dynpricing.agents.llm_agent import LLMAgent
 
-    # heuristic mode only so we can render prompts and advance the episode
-    # without needing a client; render_prompt is identical to the api path.
     agent = LLMAgent(mode="heuristic")
     env = MarketEnv(cfg)
     _, info = env.reset(seed=args.seed)
@@ -273,28 +266,23 @@ def _llm_dry_render(cfg, args) -> None:
         print(f"---------- user prompt, step {t} (day {state.day}) ----------")
         print(_indent(agent.render_prompt(state)))
         print()
-        # advance the episode with the heuristic so later prompts differ
         action = agent.act(state)
         _, _, terminated, truncated, info = env.step(action)
         state = info["state"]
         if terminated or truncated:
             break
 
-    # confirm the state variables RQ3 needs are present in the prompt
     sample = agent.render_prompt(info["state"])
     checks = {
         "exposes remaining inventory": "Remaining inventory" in sample,
         "exposes periods remaining": "PERIODS REMAINING" in sample,
         "invites pacing reasoning": "pacing" in sample.lower(),
-        # regression guard: v2 stated a fixed units-per-period quota the market
-        # could not meet, and the model cut price to unit cost chasing it.
         "no infeasible unit quota": "units per remaining period" not in sample,
     }
     print("--- prompt content checks (for RQ3) ---")
     for k, v in checks.items():
         print(f"  [{'PASS' if v else 'FAIL'}] {k}")
 
-    # parser reliability self-test on representative responses
     print("\n--- JSON parser self-test (representative model outputs) ---")
     cases = [
         ('clean json', '{"action": 2, "reasoning": "undercut competitors"}'),
@@ -377,7 +365,7 @@ def cmd_demo(args) -> None:
     cfg = _load_cfg(args.config)
     seeds = list(range(args.seeds))
     base = Scenario("baseline", cfg)
-    agent_kwargs = {"llm_mode": "heuristic"}  # demo runs offline by design
+    agent_kwargs = {"llm_mode": "heuristic"}
     rows = []
     for name in AGENT_NAMES:
         ms = evaluate_agent(name, cfg, base, seeds, agent_kwargs=agent_kwargs)
@@ -398,7 +386,7 @@ def _paired_report(rows, scenarios) -> list[dict]:
         oracle = resolve_agent_name(rows, "oracle", sname)
         pairs = []
         if gbm and llm:
-            pairs.append((gbm, llm))      # the headline RQ2 comparison
+            pairs.append((gbm, llm))
         for learner in (gbm, llm):
             if learner and oracle:
                 pairs.append((learner, oracle))
@@ -450,7 +438,6 @@ def _print_ladder(agg: list[dict]) -> None:
                   f"  stab={r['pricing_stability_mean']:.3f}{share}")
 
 
-# --------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     from dynpricing.agents.llm_agent import (
         DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDERS as _PROVIDERS,

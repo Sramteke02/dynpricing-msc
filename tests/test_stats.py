@@ -15,7 +15,7 @@ def test_bootstrap_ci_brackets_mean():
     vals = rng.normal(100, 10, size=200)
     mean, lo, hi, sem = bootstrap_mean_ci(vals, seed=0)
     assert lo < mean < hi
-    assert hi - lo < 10  # reasonably tight for n=200
+    assert hi - lo < 10
     assert sem > 0
 
 
@@ -45,14 +45,13 @@ def test_summarize_has_ci_fields():
 
 
 def test_paired_comparison_detects_clear_difference():
-    # b is always ~50 higher than a on the same seed -> significant, b wins
     rows = _rows("a", "baseline", [100, 110, 90, 105, 95, 100, 102, 98])
     rows += _rows("b", "baseline", [150, 160, 140, 155, 145, 150, 152, 148])
     res = paired_comparison(rows, "a", "b", "gross_profit", "baseline")
     assert res is not None
     assert res.significant
     assert res.winner == "b"
-    assert res.ci_high < 0  # a - b is clearly negative
+    assert res.ci_high < 0
 
 
 def test_paired_comparison_ns_when_identical_noise():
@@ -61,7 +60,6 @@ def test_paired_comparison_ns_when_identical_noise():
     rows = _rows("a", "baseline", base)
     rows += _rows("b", "baseline", base + rng.normal(0, 5, size=12))
     res = paired_comparison(rows, "a", "b", "gross_profit", "baseline")
-    # tiny/zero true difference -> CI should span 0 (not significant)
     assert res is not None
     assert not res.significant
 

@@ -43,29 +43,14 @@ from dynpricing.agents.llm_agent import (LLMAgent, FALLBACK_RPM,
 
 CONFIG_PATH = ROOT / "configs" / "calibrated.json"
 ENV_FILE = ROOT / ".env"
-#: how many small steps the agent may take to reach its price. A move is capped
-#: at ±5%, so one step cannot cross the band; 4 steps reach ~±21% of the
-#: starting price, which covers the gap a seller starting level with the market
-#: actually has to close. Fixed rather than exposed -- a seller should not have
-#: to reason about the action set.
-#:
-#: 4 rather than 8 because each step is one API call and the account is paced
-#: to 4 calls/minute (see `pacing`): 8 steps put a suggestion two minutes away.
 DEFAULT_ADJUST_CHANCES = 4
 
-#: the point in the season the maths runs at. Fixed rather than exposed -- "day
-#: 120 of 365" is an abstract thing to ask a seller for, and it fed the demand
-#: curve only through the weekday/weekend uplift (day 120 is a weekday) plus the
-#: periods-remaining count the agent sees (365 - 120 = 245, comfortably
-#: mid-season). Nothing about the calculation changes; only the widget is gone.
 DEFAULT_DAY = 120
 
-#: plain-language demand levels -> the same 0-100 scale the maths already used.
 DEMAND_LEVELS = {"Very quiet": 0, "Quiet": 25, "Normal": 50,
                  "Busy": 75, "Very busy": 100}
 
 
-# -- key loading (same source as the CLI tools) ----------------------------
 def load_env_key() -> bool:
     """Populate MISTRAL_API_KEY from .env if it is not already set."""
     if os.environ.get("MISTRAL_API_KEY"):
@@ -80,9 +65,6 @@ def load_env_key() -> bool:
     return bool(os.environ.get("MISTRAL_API_KEY"))
 
 
-#: last (requests/min, headers, probe start) read from the API, and how long
-#: that reading is trusted. The probe is itself a request against the very
-#: quota it measures, so it is made once an hour, not once a suggestion.
 _RPM_CACHE: dict = {}
 _RPM_TTL_S = 3600.0
 
@@ -102,18 +84,12 @@ def pacing() -> tuple[float, float]:
         try:
             probe = live_rpm_limit()
         except Exception:
-            # A failed probe says nothing about the cap, and may itself have
-            # spent requests -- assume the free tier and count it as a call.
             probe = (FALLBACK_RPM, {}, now)
         _RPM_CACHE["probe"] = probe
     rpm = max(1, int(probe[0]))
     return 60.0 / rpm * RPM_SAFETY, probe[2]
 
 
-# -- demand maths ----------------------------------------------------------
-# Same closed form as DemandModel.expected_units / optimal_price, with the
-# seasonal factor supplied by the slider instead of read off the calendar, so
-# the seller can dial demand from trough to peak directly.
 def intercept(cfg: EnvConfig, season_factor: float, calendar: float,
               competitor_mean: float) -> float:
     """a = a0·S·C + d·competitor_mean — the demand curve's height."""
@@ -149,7 +125,6 @@ def season_index(season_factor: float, rising: bool) -> int:
     return 3 if rising else 2
 
 
-# -- running the agents ----------------------------------------------------
 def make_state(cfg: EnvConfig, price: float, competitor_mean: float,
                inventory: int, day: int, season: int, last_units: float) -> MarketState:
     return MarketState(
@@ -199,7 +174,6 @@ def settle(agent, cfg: EnvConfig, start: float, a: float, competitor_mean: float
     return path, notes
 
 
-# -- plain-language reasons ------------------------------------------------
 def demand_words(season_factor: float) -> tuple[str, str]:
     if season_factor >= 1.35:
         return "very busy", "one of the busiest times of the year"
@@ -210,8 +184,6 @@ def demand_words(season_factor: float) -> tuple[str, str]:
     if season_factor > 0.65:
         return "quiet", "quieter than usual"
     return "very quiet", "one of the quietest times of the year"
-
-
 
 
 def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float,
@@ -227,7 +199,6 @@ def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float
     per_sale = price - cfg.unit_cost
     gap = (price / competitor_mean - 1.0) * 100 if competitor_mean > 0 else 0.0
 
-    # 1. against the competition
     if abs(gap) < 2:
         vs = (f"At **{price:.2f}** you are in line with the {competitor_mean:.2f} "
               f"other sellers charge, so you stay competitive and still make "
@@ -243,7 +214,6 @@ def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float
               f"sellers charge, so you make {per_sale:.2f} on each sale, but some "
               "shoppers will look elsewhere.")
 
-    # 2. why it suits current trade
     if season_factor > 1.05:
         fit = ("Trade is busy right now, so shoppers will pay a bit more before "
                "sales start to slip.")
@@ -255,10 +225,8 @@ def explain_price(cfg: EnvConfig, a: float, price: float, competitor_mean: float
                "best: enough profit on each sale, without putting customers "
                "off.")
 
-    # 3. what it earns
     earns = f"You would make about **{profit:,.0f} each period** at this price."
 
-    # 4. either side of it, from the real curve
     up, down = profit_at(cfg, a, price * 1.1), profit_at(cfg, a, price * 0.9)
     if up <= profit and down <= profit:
         either = (f"Charge much more or much less and you earn less: about "
@@ -307,7 +275,6 @@ def summarise_moves(path: list[float]) -> str:
             f"after {ups + downs} change{'s' if ups + downs != 1 else ''}.")
 
 
-# -- UI --------------------------------------------------------------------
 def main() -> None:
     import altair as alt
     import streamlit as st
@@ -356,8 +323,6 @@ def main() -> None:
 
     day = DEFAULT_DAY
 
-    # demand level -> seasonal factor, using the strong-seasonality amplitude so
-    # the slider spans a market that really does move
     amplitude = 0.5
     season_factor = (1 - amplitude) + (demand_pct / 100.0) * (2 * amplitude)
     calendar = 1.0 + (cfg.weekend_uplift if (day % 7) >= 5 else 0.0)
@@ -368,7 +333,7 @@ def main() -> None:
     p_star = optimal_price(cfg, a)
     best_profit = profit_at(cfg, a, p_star)
 
-    periods = DEFAULT_ADJUST_CHANCES   # prices move in small steps; fixed here
+    periods = DEFAULT_ADJUST_CHANCES
 
     if not go:
         return
@@ -378,7 +343,6 @@ def main() -> None:
                  "you. Try a busier setting.")
         return
 
-    # ---------------- the suggested price ----------------
     if not have_key:
         st.warning("**Set MISTRAL_API_KEY** to get a suggested price. Create a "
                    "`.env` file containing `MISTRAL_API_KEY=...` (it is "
@@ -386,15 +350,9 @@ def main() -> None:
         _profit_chart(st, alt, cfg, a, None)
         return
 
-    start_price = float(competitor_mean)   # you currently match the market
-    # the progress bar is the only wait indicator; it is cleared when the
-    # answer lands so it never sits beside the finished result
+    start_price = float(competitor_mean)
     prog = st.progress(0.0, text="Loading…")
     try:
-        # One call per step, spaced to the account's own requests-per-minute
-        # cap so the limit is never hit. strict_llm=True: a step that cannot
-        # be answered aborts the suggestion rather than quietly substituting
-        # the rule-of-thumb, so what the page shows is the LLM's, all of it.
         interval, probed_at = pacing()
         llm = LLMAgent(mode="api", template_name="default_v5",
                        strict_llm=True, min_call_interval=interval,
@@ -410,7 +368,7 @@ def main() -> None:
             on_step=lambda i, n, pr: prog.progress(
                 i / n, text=f"Thinking… step {i} of {n}"))
         prog.empty()
-    except Exception as exc:                       # never take the page down
+    except Exception as exc:
         prog.empty()
         st.error("No suggested price this time: the AI did not answer every "
                  "step, and nothing on this page is ever worked out without "

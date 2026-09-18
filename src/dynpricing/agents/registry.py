@@ -17,7 +17,6 @@ from dynpricing.agents.gbm_uniform_agent import UniformExplorationGBMAgent
 from dynpricing.agents.llm_agent import LLMAgent
 from dynpricing.agents.oracle_dp import BackwardInductionOracle
 
-#: canonical evaluation order (floor -> learning agents -> ceiling)
 AGENT_NAMES = (
     "fixed",
     "cost_plus",
